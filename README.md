@@ -3,6 +3,11 @@
 Play the videos on your Windows PC on your TV - a Chromecast, a TV with Chromecast built-in,
 Google TV or an Apple TV. Drop videos on the window, pick the TV, press play.
 
+**Windows download:** [Installer](https://github.com/TVAVAE/video-caster/releases/latest/download/VideoCaster-Setup.exe)
+([all releases](https://github.com/TVAVAE/video-caster/releases)). The installer includes Python,
+FFmpeg and FFprobe. A [portable executable](https://github.com/TVAVAE/video-caster/releases/latest/download/VideoCaster.exe)
+is also available; it needs a separate FFmpeg installation.
+
 Whatever the TV can't play by itself (H.265 10-bit, odd containers, DTS audio, picture
 subtitles, ...) is converted on the fly while it plays, on the graphics chip when the PC has
 one. You can still skip and rewind with the app or with the TV remote.
@@ -59,8 +64,9 @@ one. You can still skip and rewind with the app or with the TV remote.
 ## Requirements
 
 - Windows 10 or 11 (developed and tested on Windows 11)
-- Python 3 (tested with 3.15) - from [python.org](https://www.python.org/downloads/) or the Microsoft Store
-- [FFmpeg](https://ffmpeg.org) with `ffmpeg` and `ffprobe` on the PATH. The Gyan build from winget
+- Python is needed only when running from source or building the executable
+- The Windows installer includes FFmpeg and FFprobe. For a portable executable or source install,
+  install [FFmpeg](https://ffmpeg.org) with `ffmpeg` and `ffprobe` on the PATH. The Gyan build from winget
   has everything, including Chromaprint for *Skip intros*:
   ```powershell
   winget install Gyan.FFmpeg
@@ -68,6 +74,44 @@ one. You can still skip and rewind with the app or with the TV remote.
 - The PC and the TV on the same network
 
 ## Install and run
+
+### Windows installer
+
+Download and run [**`VideoCaster-Setup.exe`**](https://github.com/TVAVAE/video-caster/releases/latest/download/VideoCaster-Setup.exe).
+It installs Video Caster, FFmpeg (including
+Chromaprint for intro detection), FFprobe, Start menu shortcuts and an uninstaller.
+Python and a separate FFmpeg installation are not needed.
+
+When installing for all users, leave **Allow TVs to connect on private local networks**
+selected. This adds firewall rules for Video Caster on private networks, restricted
+to devices on the local subnet; uninstall removes those rules. For a current-user
+installation, allow Video Caster on private networks when Windows asks instead.
+Make sure your trusted home network is set to **Private** in Windows.
+
+Upgrading or uninstalling preserves playlists, settings and watch progress in
+`%LOCALAPPDATA%\Video Caster\`. The installer is unsigned, so Windows may ask you
+to confirm running it.
+
+### Windows executable
+
+Double-click `VideoCaster.exe` from a Windows build. Python and the app's Python
+libraries are included; FFmpeg and FFprobe must still be installed as described above.
+Alternatively, put `ffmpeg.exe` and `ffprobe.exe` next to `VideoCaster.exe`, or in
+`ffmpeg\bin` beside it (include any DLLs required by your FFmpeg build).
+
+Allow **Video Caster** through Windows Firewall on **private networks** if prompted.
+The PC and TV must be able to reach each other on the local network.
+
+The executable keeps settings, playlists, watch progress, cache and logs in
+`%LOCALAPPDATA%\Video Caster\`, so replacing or moving the executable preserves them.
+Existing source installs keep using `app/state.json`; to transfer their settings,
+close both versions and copy that file to `%LOCALAPPDATA%\Video Caster\state.json`.
+The executable is unsigned; Windows may ask you to confirm running it.
+
+### Run from source
+
+Use Python 3 (tested with 3.12 for packaging and 3.15 for the original source app),
+from [python.org](https://www.python.org/downloads/).
 
 ```powershell
 git clone https://github.com/TVAVAE/video-caster.git
@@ -81,6 +125,8 @@ python app\main.py
 You can also pass videos or folders: `python app\main.py "D:\Series\Some Show"`.
 Other options: `--state <file>` (use another settings file), `--no-discovery` (don't look for
 TVs), `--screenshot <file.png>` (save a picture of the window and exit).
+The executable accepts the same options, e.g.
+`.\VideoCaster.exe "D:\Series\Some Show"`.
 
 The first time, Windows may ask whether Python may use the network: allow it on **private
 networks** - the TV fetches the video from a small web server in the app.
@@ -145,7 +191,7 @@ your own (free) OpenSubtitles account: sign up at [opensubtitles.com](https://ww
 open [API consumers](https://www.opensubtitles.com/consumers) in your profile and create one.
 The search then also asks the official OpenSubtitles API: more results, with download counts.
 User name and password are optional too - logged in, you get more downloads per day. They are
-stored in `app/state.json`, encrypted for your Windows account (Windows' own DPAPI). Empty the
+stored in the settings file, encrypted for your Windows account (Windows' own DPAPI). Empty the
 key and press *Save* to stop using it.
 
 ## Privacy
@@ -166,22 +212,95 @@ your own API key.
 | `app/videocaster.log` | What happened during playback - handy when something goes wrong |
 
 The last three are personal or temporary and are kept out of git by `.gitignore`.
+For the executable, those three paths are under `%LOCALAPPDATA%\Video Caster\`
+instead of `app/`.
 
 ## Troubleshooting
 
 - **The TV isn't listed** - check that the PC and the TV are on the same network, then use
   *Search again* in the TV menu.
-- **The TV shows nothing or can't load the video** - allow Python through Windows Firewall on
+- **The TV shows nothing or can't load the video** - allow Video Caster (or Python when running from source) through Windows Firewall on
   private networks. *Troubleshooting* (in the settings) shows the address the TV must reach.
+- **Couldn't connect to a TV** - check that it is awake and on the same home network,
+  then use *Search again*. Use the latest build; packaging must include the Python
+  runtime's SSL support files for Chromecast and AirPlay connections to work.
 - **Sound but no picture** - the app normally restarts the TV's player by itself; if not,
   *Disconnect* and connect again.
 - **No sound with Passthrough** - your TV or soundbar doesn't take Dolby; choose *Stereo Downmix*.
 - **Playback stutters** - run the *Speed Test*, or set *Quality* lower. On a weak connection the
   app switches to adaptive streaming by itself.
 - Details are in `app/videocaster.log`; *Troubleshooting* in the settings shows the setup and
-  lets you copy it.
+  lets you copy it. For the executable, the log is `%LOCALAPPDATA%\Video Caster\videocaster.log`.
 
 ## For developers
+
+### Build the Windows executable
+
+Build on 64-bit Windows with 64-bit Python 3.12. From the project directory:
+
+```powershell
+.\build-windows.ps1
+```
+
+If PowerShell blocks local scripts, allow this script for the current invocation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build-windows.ps1
+```
+
+Use `-Python "C:\Path\To\python.exe"` to select a Python installation when creating
+the build environment. The script creates `.venv-build`, installs
+`requirements-build.txt`, and builds **`dist\VideoCaster.exe`** using PyInstaller.
+`VideoCaster.spec` includes dynamically loaded Chromecast and AirPlay modules;
+only application code and dependency resources are bundled, never personal settings or cache.
+FFmpeg is not bundled. Build output and the build environment are ignored by Git.
+The build script isolates Windows DLL lookup from other tools on `PATH` to avoid
+bundling incompatible copies of system libraries.
+
+For a quick startup check without searching for TVs:
+
+```powershell
+.\dist\VideoCaster.exe --no-discovery --state "$env:TEMP\videocaster-smoke.json" --screenshot "$env:TEMP\videocaster-smoke.png"
+```
+
+The app should save a screenshot and exit. This checks startup; casting and playback
+still need a real TV and FFmpeg. Distribute the executable as a GitHub Release asset
+rather than committing the binary to the source repository.
+
+To diagnose packaged startup failures, set `$env:VIDEOCASTER_BUILD_CONSOLE = "1"`
+before building. This creates `dist\VideoCaster-debug.exe`, which prints errors to
+a console. Remove that environment variable before making the normal windowed build:
+`Remove-Item Env:\VIDEOCASTER_BUILD_CONSOLE`.
+
+### Build the Windows installer
+
+Install [Inno Setup 7](https://jrsoftware.org/inno-setup/downloads) and extract a
+[Gyan FFmpeg full build](https://www.gyan.dev/ffmpeg/builds/) (the full build includes
+Chromaprint). Point at the extracted folder containing `bin` and `LICENSE`:
+
+```powershell
+.\build-installer.ps1 -FFmpegDirectory "C:\Tools\ffmpeg" -ISCC "C:\Program Files\Inno Setup 7\ISCC.exe"
+```
+
+This builds the app and **`dist\VideoCaster-Setup.exe`**. Use `-SkipAppBuild` to package
+an already built `dist\VideoCaster.exe`, or `-Version "0.1.1"` to set the installer
+version. `installer/VideoCaster.iss` defines installation, shortcuts, optional private
+network firewall rules, and uninstall. FFmpeg's license and build information are
+installed with it. Downloaded tools and staged payloads are not committed to Git.
+
+### Check a packaged TV connection
+
+This discovers a named TV and waits for a connection without starting playback:
+
+```powershell
+.\dist\VideoCaster.exe --check-device "Living Room" --report "$env:TEMP\videocaster-connection.json"
+```
+
+The JSON report includes success/failure, discovered devices and library import
+errors. A companion `.log` file captures network-library messages. These reports
+contain local TV names and addresses; review them before sharing.
+
+### Development settings
 
 For testing there are two environment variables:
 

@@ -8,6 +8,11 @@ app/cache/
 # OpenSubtitles account (encrypted for your Windows user, but still yours)
 app/state.json
 app/videocaster.log
+app/connection-report.json
+app/connection-report.log
+
+# Temporary HLS initialization fragment from local playback/testing
+/init.mp4
 
 # Screenshots
 app/shots/
@@ -17,6 +22,11 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.venv-build/
+
+# Windows executable and packaging intermediates
+build/
+dist/
 
 # Craft Anything's own working files (builder state, logs, and its notes from
 # investigating the original app) - not part of Video Caster itself

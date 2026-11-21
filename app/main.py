@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QWidgetAction)
 
 APP_NAME = be.APP_NAME
-DEFAULT_STATE = Path(__file__).resolve().with_name("state.json")
+DEFAULT_STATE = be.DATA_DIR / "state.json"
 
 ACCENT = QColor("#a465c9")
 ACCENT_DARK = QColor("#8a4db0")
@@ -2858,8 +2858,47 @@ def main():
     parser.add_argument("--screenshot", help="save a PNG of the window and exit")
     parser.add_argument("--state", default=str(DEFAULT_STATE), help="settings and playlists file")
     parser.add_argument("--no-discovery", action="store_true", help="don't search the network for TVs")
+    parser.add_argument("--check-device", metavar="NAME", help="check a TV connection without starting playback, then exit")
+    parser.add_argument("--report", help="JSON report path for --check-device")
     parser.add_argument("files", nargs="*", help="videos or folders to add")
     args = parser.parse_args()
+
+    if args.check_device:
+        import logging
+        import traceback
+        report_path = Path(args.report) if args.report else be.DATA_DIR / "connection-report.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(filename=str(report_path.with_suffix(".log")), level=logging.INFO,
+                            format="%(asctime)s %(name)s %(levelname)s %(message)s", encoding="utf-8")
+        discovery = be.Discovery(lambda: None, load_state(args.state).get("known_devices", []))
+        report = {"device": args.check_device, "connected": False, "devices": [],
+                  "import_errors": be.NETWORK_IMPORT_ERRORS,
+                  "chromecast_available": be.pychromecast is not None, "airplay_available": be.pyatv is not None}
+        try:
+            discovery.start()
+            deadline = time.monotonic() + 12
+            dev = None
+            while time.monotonic() < deadline:
+                dev = next((d for d in discovery.snapshot()
+                            if d.name.casefold() == args.check_device.casefold() and d.online and d.obj), None)
+                if dev:
+                    break
+                time.sleep(0.2)
+            report["devices"] = [{"name": d.name, "kind": d.kind, "host": d.host} for d in discovery.snapshot()]
+            if dev is None:
+                raise RuntimeError(f"{args.check_device} was not found on this network.")
+            player = be.make_player(dev, discovery)
+            player.connect(fresh=False)
+            report["connected"] = True
+        except Exception:
+            report["error"] = traceback.format_exc()
+        finally:
+            for d in discovery.snapshot():
+                if d.kind == "chromecast" and d.obj:
+                    d.obj.socket_client.stop.set()
+            discovery.stop()
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        sys.exit(0 if report["connected"] else 1)
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)

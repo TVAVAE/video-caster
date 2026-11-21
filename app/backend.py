@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 import uuid
@@ -27,22 +28,33 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
+NETWORK_IMPORT_ERRORS = {}
+
 try:
     import pychromecast
     import zeroconf
     from pychromecast.discovery import CastBrowser, SimpleCastListener
 except Exception:  # pragma: no cover - the app still runs without Chromecast support
     pychromecast = None
+    NETWORK_IMPORT_ERRORS["chromecast"] = traceback.format_exc()
 
 try:
     import pyatv
     from pyatv.const import DeviceState
 except Exception:  # pragma: no cover
     pyatv = None
+    NETWORK_IMPORT_ERRORS["airplay"] = traceback.format_exc()
 
 APP_NAME = "Video Caster"
 APP_DIR = Path(__file__).resolve().parent
-CACHE_DIR = APP_DIR / "cache"
+# A one-file executable extracts its code into a temporary directory. Keep user
+# data outside that directory so upgrades and closing the app cannot erase it.
+if getattr(sys, "frozen", False):
+    DATA_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "Video Caster"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    DATA_DIR = APP_DIR
+CACHE_DIR = DATA_DIR / "cache"
 
 # Keeps ffmpeg/ffprobe from flashing a console window on Windows.
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -163,7 +175,14 @@ SUB_ENCODINGS = [
 def refresh_windows_path():
     """Find ffmpeg even when it was installed (e.g. with winget) after whatever
     started this app: re-read PATH from the registry if ffmpeg isn't on it."""
-    if sys.platform != "win32" or shutil.which("ffmpeg"):
+    if sys.platform != "win32":
+        return
+    if getattr(sys, "frozen", False):
+        # Also support a portable FFmpeg installation beside VideoCaster.exe.
+        exe_dir = Path(sys.executable).resolve().parent
+        os.environ["PATH"] = os.pathsep.join(
+            [str(exe_dir), str(exe_dir / "ffmpeg" / "bin"), os.environ.get("PATH", "")])
+    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
         return
     try:
         import winreg
@@ -1733,12 +1752,12 @@ def _suspend(proc, on):
 
 # --------------------------------------------------------------------------- log
 
-LOG_FILE = APP_DIR / "videocaster.log"
+LOG_FILE = DATA_DIR / "videocaster.log"
 _log_lock = threading.Lock()
 
 
 def log(msg):
-    """One line in videocaster.log (next to the app), for finding out what happened."""
+    """One line in videocaster.log, for finding out what happened."""
     try:
         with _log_lock:
             if LOG_FILE.exists() and LOG_FILE.stat().st_size > 1_000_000:
@@ -2309,6 +2328,7 @@ class Discovery:
                 self.browser = CastBrowser(listener, self.zconf, known_hosts=hosts or None)
                 self.browser.start_discovery()
             except Exception:
+                log("Chromecast discovery failed: " + traceback.format_exc())
                 self.browser = None
         self.scan_airplay()
 
@@ -2341,6 +2361,7 @@ class Discovery:
                 try:
                     dev.obj = pychromecast.get_chromecast_from_cast_info(info, self.zconf)
                 except Exception:
+                    log("Chromecast initialization failed: " + traceback.format_exc())
                     dev.obj = None
             self.devices[key] = dev
         self.on_change()
