@@ -1,0 +1,34 @@
+# Video Caster - what stays out of git
+
+# Made while playing: converted video pieces, prepared copies, thumbnails, extracted
+# subtitles, audio fingerprints. Can grow to gigabytes; the app rebuilds it by itself.
+app/cache/
+
+# Your own data: playlists and file paths, TV addresses, watch progress, and the
+# OpenSubtitles account (encrypted for your Windows user, but still yours)
+app/state.json
+app/videocaster.log
+
+# Screenshots
+app/shots/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Craft Anything's own working files (builder state, logs, and its notes from
+# investigating the original app) - not part of Video Caster itself
+craft.json
+usage.json
+feed.json
+build-activity.log
+inbox/
+checks/
+capture/
+investigation.cany/
+
+# Windows
+Thumbs.db
+desktop.ini
