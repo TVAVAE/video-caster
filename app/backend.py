@@ -822,8 +822,11 @@ def video_query(path):
     return {"query": _words(title)}
 
 
-class OpenSubtitlesError(Exception):
-    """Something to tell the viewer, in plain words."""
+class SubtitleError(Exception):
+    """Something about finding subtitles online to tell the viewer, in plain words."""
+
+
+OpenSubtitlesError = SubtitleError
 
 
 def _os_error(e):
@@ -1022,6 +1025,160 @@ def opensubtitles_from(account):
     if not key:
         return None
     return OpenSubtitles(key, account.get("username", ""), unprotect(account.get("password", "")))
+
+
+# Stremio's own OpenSubtitles add-on: free, no account or key. It finds subtitles by IMDb id
+# (looked up by title in Stremio's catalogue, Cinemeta) and by the file's fingerprint.
+STREMIO_SUBS = os.environ.get("VIDEOCASTER_STREMIO_SUBS") or "https://opensubtitles-v3.strem.io"
+CINEMETA = os.environ.get("VIDEOCASTER_CINEMETA") or "https://v3-cinemeta.strem.io"
+# the add-on's language codes (ISO 639-2) that need more than lang_name: -> search window language
+_STREMIO_LANGS = {"pob": "Portuguese (Brazil)", "por": "Portuguese (Portugal)", "chi": "Chinese (simplified)",
+                  "zhe": "Chinese (simplified)", "zht": "Chinese (traditional)", "spl": "Spanish", "spn": "Spanish"}
+
+
+def stremio_language(code):
+    """Search-window language name for one of the add-on's language codes, or None."""
+    code = (code or "").lower()
+    name = _STREMIO_LANGS.get(code) or lang_name(code)
+    return name if name in OS_LANGS else None
+
+
+def _get_json(url, what):
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": OS_AGENT,
+                                                                         "Accept": "application/json"}), timeout=20) as r:
+            return json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        raise SubtitleError(f"{what} answered with error {e.code}.") from None
+    except (urllib.error.URLError, OSError) as e:
+        raise SubtitleError(f"{what} can't be reached ({getattr(e, 'reason', e)}).") from None
+    except ValueError:
+        raise SubtitleError(f"{what} sent an answer that couldn't be read.") from None
+
+
+def _release_group(name):
+    """'PSA' from '...x265 HEVC-PSA', 'ELiTE' from '...x265-ELiTE[EZTVx.to]'."""
+    m = re.search(r"-([A-Za-z0-9]+)(?:\[[^\]]*\])?$", Path(name).stem if "." in name[-5:] else name)
+    return m.group(1).lower() if m else ""
+
+
+class StremioSubtitles:
+    """Subtitles through Stremio's own OpenSubtitles add-on - nothing to sign up for."""
+
+    _ids: dict = {}  # (kind, title, year) -> IMDb id, for this run of the app
+
+    def imdb_id(self, path):
+        """('series', 'tt33546863:1:3') or ('movie', 'tt38672588') for a video, from its file name."""
+        q = video_query(path)
+        kind = "series" if "episode_number" in q else "movie"
+        title, year = q["query"], q.get("year")
+        m = re.match(r"(.+?)\s+((?:19|20)\d\d)$", title)
+        if kind == "series" and m:  # 'Off.Campus.2026.S01E03': the year belongs to the series
+            title, year = m.group(1), int(m.group(2))
+        if not title:
+            raise SubtitleError("Couldn't tell from the file name which film or series this is.")
+        key = (kind, title, year)
+        if key not in self._ids:
+            metas = _get_json(f"{CINEMETA}/catalog/{kind}/top/search={quote(title)}.json", "Stremio's catalogue")
+            metas = [m for m in (metas.get("metas") or []) if str(m.get("id", "")).startswith("tt")]
+            if not metas:
+                raise SubtitleError(f"'{title}' wasn't found in Stremio's catalogue.")
+            best = metas[0]
+            for m in metas:  # same year first, else the same name, else the catalogue's first
+                if year and str(m.get("releaseInfo") or "").startswith(str(year)):
+                    best = m
+                    break
+            else:
+                best = next((m for m in metas if _words(m.get("name") or "") == title), best)
+            self._ids[key] = best["id"]
+        vid = self._ids[key]
+        return kind, (f"{vid}:{q['season_number']}:{q['episode_number']}" if kind == "series" else vid)
+
+    def search(self, path):
+        """All subtitles the add-on has for this video (every language), as search results."""
+        kind, vid = self.imdb_id(path)
+        extra = ""
+        h = movie_hash(path)
+        if h:
+            extra = "/" + urlencode({"videoHash": h, "videoSize": os.path.getsize(path), "filename": Path(path).name},
+                                    quote_via=quote)
+        data = _get_json(f"{STREMIO_SUBS}/subtitles/{kind}/{vid}{extra}.json", "Stremio's subtitle service")
+        group = _release_group(Path(path).name)
+        out = []
+        for s in data.get("subtitles") or []:
+            name = stremio_language(s.get("lang"))
+            if not name or not s.get("url"):
+                continue
+            release = s.get("movieReleaseName") or s.get("subtitleFileName") or ""
+            fname = s.get("subtitleFileName") or release
+            out.append({"source": "stremio", "url": s["url"], "id": s.get("id"), "language": OS_LANGS[name],
+                        "language_name": name, "release": release, "downloads": None,
+                        "exact": s.get("m") == "h",
+                        "same_release": bool(group) and re.sub(r"\[[^\]]*\]", "", s.get("releaseGroup") or "").lower() == group,
+                        "hearing_impaired": bool(re.search(r"(?i)(?<![a-z])(sdh|hi|cc)(?![a-z])", fname)),
+                        "machine": False, "trusted": False,
+                        "variant": "Latin American" if (s.get("lang") or "").lower() in ("spl", "spn") else ""})
+        return out
+
+    def download(self, sub, video_path):
+        url = sub["url"]
+        if not url.startswith("https://") and not os.environ.get("VIDEOCASTER_STREMIO_SUBS"):
+            raise SubtitleError("The subtitle service gave an unexpected download link.")
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": OS_AGENT}), timeout=30) as f:
+                data = f.read(5_000_000)
+        except (urllib.error.URLError, OSError) as e:
+            raise SubtitleError(f"The subtitle file couldn't be downloaded ({getattr(e, 'reason', e)}).") from None
+        if data[:2] == b"\x1f\x8b":
+            import gzip
+            data = gzip.decompress(data)
+        if not data.strip():
+            raise SubtitleError("The downloaded subtitle file is empty.")
+        return save_online_subtitle(video_path, sub["language"], data)
+
+
+def find_subtitles(path, language, os_client=None):
+    """Subtitles for a video in one language (a name from OS_LANGS): from Stremio's free add-on,
+    and also from the OpenSubtitles API when the viewer saved their own key. Returns
+    (results best first, other languages that do have some, problems to mention)."""
+    results, others, problems = [], set(), []
+    try:
+        for s in StremioSubtitles().search(path):
+            if s["language_name"] == language:
+                results.append(s)
+            else:
+                others.add(s["language_name"])
+    except SubtitleError as e:
+        problems.append(str(e))
+    if os_client is not None:
+        try:
+            seen = {(s["release"].lower(), s["language"]) for s in results}
+            group = _release_group(Path(path).name)
+            for s in os_client.search(path, OS_LANGS[language]):
+                s.update(source="opensubtitles", language=OS_LANGS[language], language_name=language, variant="",
+                         same_release=bool(group) and group in s["release"].lower())
+                key = (s["release"].lower(), s["language"])
+                if key in seen:  # the same file from both: keep the free one, with the download count
+                    for r in results:
+                        if (r["release"].lower(), r["language"]) == key and r["downloads"] is None:
+                            r["downloads"] = s["downloads"]
+                            r["exact"] = r["exact"] or s["exact"]
+                    continue
+                seen.add(key)
+                results.append(s)
+        except SubtitleError as e:
+            problems.append(f"OpenSubtitles (your key): {e}")
+    results.sort(key=lambda s: (not s["exact"], not s["same_release"], s["machine"], -(s["downloads"] or 0)))
+    return results, sorted(others), problems
+
+
+def fetch_subtitle(sub, video_path, os_client=None):
+    """Download a search result (from either source) next to the video: (file, downloads left today or None)."""
+    if sub.get("source") == "opensubtitles":
+        if os_client is None:
+            raise SubtitleError("This one needs your OpenSubtitles key (Account...).")
+        return os_client.download(sub, video_path), os_client.remaining
+    return StremioSubtitles().download(sub, video_path), None
 
 
 INTRO_SECS = 5  # countdown before an intro is skipped

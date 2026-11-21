@@ -39,8 +39,8 @@ one. You can still skip and rewind with the app or with the TV remote.
 - Drawn by the TV (size, colour, font and style change live), or burned into the picture -
   also for picture-based subtitles such as PGS.
 - Delay and character set adjustable.
-- **Search online**: find and download subtitles on [OpenSubtitles.com](https://www.opensubtitles.com),
-  matched to your exact file (see [Online subtitles](#online-subtitles)).
+- **Search online**: find and download subtitles from OpenSubtitles, matched to your exact file -
+  no account needed (see [Online subtitles](#online-subtitles)).
 
 **Series**
 - **Possible Next**: the next episode in the folder is suggested under the playlist and plays
@@ -126,25 +126,34 @@ find subtitles online, show in Explorer.
 ## Online subtitles
 
 Choose **Search online...** in the subtitle list, or right-click a video and choose
-**Find subtitles online...**.
+**Find subtitles online...**. No account or sign-up is needed.
 
-1. The first time, enter an **API key** from your own (free) OpenSubtitles account: sign up at
-   [opensubtitles.com](https://www.opensubtitles.com), open
-   [API consumers](https://www.opensubtitles.com/consumers) in your profile and create one.
-   User name and password are optional - logged in, you get more downloads per day.
-2. Pick the language and search. Subtitles made for exactly your file are marked with ✓ and
-   listed first; machine translations last.
-3. **Download & use** saves the file next to the video as `<video name>.<language>.online.srt`
-   and switches to it straight away. Next time the app finds it by itself.
+1. The search starts straight away in your usual subtitle language; pick another language and
+   press *Search* if you like. Subtitles made for exactly your file are marked with ✓ and listed
+   first, then ones for the same release. If there are none in your language, the window says
+   which languages do have some.
+2. **Download & use** (or double-click) saves the file next to the video as
+   `<video name>.<language>.online.srt` and switches to it straight away. Next time the app
+   finds it by itself.
 
-The API key and password are stored in `app/state.json`, encrypted for your Windows account
-(Windows' own DPAPI).
+The subtitles come from OpenSubtitles through the free service the Stremio media player uses
+(its *OpenSubtitles v3* add-on and its *Cinemeta* catalogue, to look up the IMDb id of a film or
+series from the file name). That service is made for Stremio, so it could change at any time.
+
+**Optional - your own OpenSubtitles API key.** Under **Account...** you can add an API key from
+your own (free) OpenSubtitles account: sign up at [opensubtitles.com](https://www.opensubtitles.com),
+open [API consumers](https://www.opensubtitles.com/consumers) in your profile and create one.
+The search then also asks the official OpenSubtitles API: more results, with download counts.
+User name and password are optional too - logged in, you get more downloads per day. They are
+stored in `app/state.json`, encrypted for your Windows account (Windows' own DPAPI). Empty the
+key and press *Save* to stop using it.
 
 ## Privacy
 
 Everything stays on your own network: the app talks only to your TVs. Only when you use the
-online subtitle search, the video's fingerprint (OpenSubtitles' file hash) and name are sent to
-OpenSubtitles.com.
+online subtitle search, the video's file name, size and fingerprint (OpenSubtitles' file hash)
+are sent to Stremio's subtitle service (`strem.io`) - and to OpenSubtitles.com if you added
+your own API key.
 
 ## Files
 
@@ -177,8 +186,10 @@ The last three are personal or temporary and are kept out of git by `.gitignore`
 For testing there are two environment variables:
 
 - `VIDEOCASTER_THROTTLE_KBPS` - slows the media server down, to try weak connections.
-- `VIDEOCASTER_OS_API` - points the subtitle search at another server (e.g. a local stand-in).
+- `VIDEOCASTER_STREMIO_SUBS`, `VIDEOCASTER_CINEMETA`, `VIDEOCASTER_OS_API` - point the subtitle
+  search at other servers (e.g. local stand-ins).
 
 Built with [PySide6](https://doc.qt.io/qtforpython-6/), [pychromecast](https://github.com/home-assistant-libs/pychromecast),
 [pyatv](https://pyatv.dev), [NumPy](https://numpy.org), [FFmpeg](https://ffmpeg.org) with
-[Chromaprint](https://acoustid.org/chromaprint), and the [OpenSubtitles.com API](https://opensubtitles.stoplight.io).
+[Chromaprint](https://acoustid.org/chromaprint); subtitles from [OpenSubtitles](https://www.opensubtitles.com),
+through [Stremio](https://www.stremio.com)'s add-ons or the [OpenSubtitles.com API](https://opensubtitles.stoplight.io).

@@ -1038,9 +1038,10 @@ class SettingsPanel(QFrame):
 # --------------------------------------------------------------------------- main window
 
 class SubtitleSearchDialog(QDialog):
-    """Find subtitles for a video on OpenSubtitles.com: by the file's fingerprint (exact
-    matches for this very release) and by its name; the chosen one is downloaded next to the
-    video and used right away."""
+    """Find subtitles for a video online: OpenSubtitles through Stremio's free add-on (no
+    account), plus the OpenSubtitles API itself for viewers who saved their own key. By the
+    file's fingerprint (exact matches for this very release) and its name; the chosen one is
+    downloaded next to the video and used right away."""
 
     def __init__(self, win, path):
         super().__init__(win)
@@ -1049,19 +1050,22 @@ class SubtitleSearchDialog(QDialog):
         self.setMinimumSize(620, 420)
         lay = QVBoxLayout(self)
         head = QLabel(f"<b>{MainWindow._short_title(path)}</b><br><span style='color:#666'>Searches "
-                      "OpenSubtitles.com by this file's fingerprint and name.</span>")
+                      "OpenSubtitles by this file's fingerprint and name - no account needed.</span>")
         head.setTextFormat(Qt.RichText)
         lay.addWidget(head)
 
-        # account (needed once): an API key from the viewer's own OpenSubtitles account
+        # optional: the viewer's own OpenSubtitles API key, for the official API as well
         self.account = QFrame()
         self.account.setStyleSheet("QFrame { background: #f3eefa; border-radius: 4px; }")
         al = QGridLayout(self.account)
-        info = QLabel("OpenSubtitles needs a free <b>API key</b> from your own account: sign up at "
+        info = QLabel("<b>Optional.</b> The search works without an account (through Stremio's free "
+                      "OpenSubtitles service). With your own OpenSubtitles <b>API key</b> it also asks the official "
+                      "API - more results, with download counts: sign up at "
                       "<a href='https://www.opensubtitles.com'>opensubtitles.com</a>, open "
                       "<a href='https://www.opensubtitles.com/consumers'>API consumers</a> in your profile and "
-                      "create one. User name and password are optional - logged in, you get more downloads per day. "
-                      "They're kept in this app's settings, encrypted for your Windows account.")
+                      "create one. User name and password are optional too - logged in, you get more downloads per "
+                      "day. They're kept in this app's settings, encrypted for your Windows account. Empty the key "
+                      "and Save to stop using it.")
         info.setWordWrap(True)
         info.setOpenExternalLinks(True)
         info.setTextFormat(Qt.RichText)
@@ -1120,12 +1124,8 @@ class SubtitleSearchDialog(QDialog):
         close.clicked.connect(self.reject)
         lay.addWidget(bb)
 
-        has_key = bool(self.key_edit.text().strip())
-        self.account.setVisible(not has_key)
-        if has_key:
-            QTimer.singleShot(0, self.search)
-        else:
-            self.status.setText("Enter your OpenSubtitles API key to search.")
+        self.account.hide()
+        QTimer.singleShot(0, self.search)
 
     def done(self, r):
         self.closed = True
@@ -1138,11 +1138,11 @@ class SubtitleSearchDialog(QDialog):
 
     def _save_account(self):
         key = self.key_edit.text().strip()
-        if not key:
-            self.status.setText("The API key is needed.")
-            return
-        self.win.state["opensubtitles"] = {"api_key": be.protect(key), "username": self.user_edit.text().strip(),
-                                           "password": be.protect(self.pass_edit.text())}
+        if key:
+            self.win.state["opensubtitles"] = {"api_key": be.protect(key), "username": self.user_edit.text().strip(),
+                                               "password": be.protect(self.pass_edit.text())}
+        else:  # no key: back to the free service only
+            self.win.state.pop("opensubtitles", None)
         self.win.save()
         self.win.os_client = None  # a new client (and login) with these details
         self.account.hide()
@@ -1161,31 +1161,30 @@ class SubtitleSearchDialog(QDialog):
 
     def search(self):
         client = self._client()
-        if client is None:
-            self.account.show()
-            self.status.setText("Enter your OpenSubtitles API key to search.")
-            return
         lang_name = self.lang.currentText()
-        code = be.OS_LANGS[lang_name]
         self.tree.clear()
         self._busy(True, f"Searching {lang_name} subtitles...")
 
         def work():
             try:
-                res, err = client.search(self.path, code), None
-            except be.OpenSubtitlesError as e:
-                res, err = [], str(e)
-            self._later(lambda: self._show(res, err, lang_name))
+                res, others, problems = be.find_subtitles(self.path, lang_name, client)
+            except Exception as e:  # never leave the window stuck on "Searching..."
+                res, others, problems = [], [], [f"The search failed ({e.__class__.__name__}: {e})."]
+            self._later(lambda: self._show(res, others, problems, lang_name))
 
         worker(work)
 
-    def _show(self, results, err, lang_name):
+    def _show(self, results, others, problems, lang_name):
         self.results = results
         self.tree.clear()
         for s in results:
-            notes = [n for n, on in (("hearing impaired", s["hearing_impaired"]),
-                                     ("machine translated", s["machine"]), ("trusted", s["trusted"])) if on]
-            it = QTreeWidgetItem(["✓" if s["exact"] else "", s["release"], f"{s['downloads']:,}", ", ".join(notes)])
+            notes = [n for n, on in (("same release", s["same_release"] and not s["exact"]),
+                                     (s["variant"], bool(s["variant"])),
+                                     ("hearing impaired", s["hearing_impaired"]),
+                                     ("machine translated", s["machine"]), ("trusted", s["trusted"]),
+                                     ("from your API key", s["source"] == "opensubtitles")) if on]
+            downloads = f"{s['downloads']:,}" if s["downloads"] is not None else ""
+            it = QTreeWidgetItem(["✓" if s["exact"] else "", s["release"], downloads, ", ".join(notes)])
             it.setToolTip(0, "Made for exactly this file" if s["exact"] else "")
             it.setToolTip(1, s["release"])
             if s["exact"]:
@@ -1194,15 +1193,17 @@ class SubtitleSearchDialog(QDialog):
         if results:
             self.tree.setCurrentItem(self.tree.topLevelItem(0))
         exact = sum(s["exact"] for s in results)
-        if err:
-            text = err
-        elif not results:
-            text = f"No {lang_name} subtitles found. Try another language."
+        if not results:
+            text = f"No {lang_name} subtitles found."
+            if others:
+                text += " There are some in " + ", ".join(others[:8]) + ("..." if len(others) > 8 else ".")
         else:
             text = (f"{len(results)} found" + (f", {exact} made for exactly this file (✓)" if exact else "")
                     + ". Double-click one to use it.")
+        if problems:
+            text += ("\n" if text else "") + "\n".join(problems)
         self._busy(False, text)
-        if err and "API key" in err:
+        if any("API key" in p for p in problems):
             self.account.show()
 
     def _selection(self):
@@ -1211,17 +1212,17 @@ class SubtitleSearchDialog(QDialog):
     def download(self):
         items = self.tree.selectedItems()
         client = self._client()
-        if not items or client is None or not self.search_btn.isEnabled():
+        if not items or not self.search_btn.isEnabled():
             return
         sub = self.results[self.tree.indexOfTopLevelItem(items[0])]
         self._busy(True, "Downloading...")
 
         def work():
             try:
-                f, err = client.download(sub, self.path), None
-            except be.OpenSubtitlesError as e:
-                f, err = None, str(e)
-            self._later(lambda: self._downloaded(f, err, client.remaining))
+                (f, remaining), err = be.fetch_subtitle(sub, self.path, client), None
+            except be.SubtitleError as e:
+                f, remaining, err = None, None, str(e)
+            self._later(lambda: self._downloaded(f, err, remaining))
 
         worker(work)
 
