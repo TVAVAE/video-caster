@@ -98,6 +98,7 @@ GLOBAL_DEFAULTS = {
     "hevc_native": False,      # turn on when the TV plays H.265 itself
     "up_next": True,           # at the end credits: count down and play the next episode
     "skip_intro": True,        # a series' opening titles (found by comparing episodes): skipped
+    "screen_sound": True,      # casting the PC screen: with the PC's sound
     "sub_font": "Sans-serif",  # subtitle font and style: for all videos
     "sub_font_style": "Normal",
 }
@@ -1771,6 +1772,50 @@ def log(msg):
 # --------------------------------------------------------------------------- prepared (seekable) copies
 
 PREP_DIR = CACHE_DIR / "prepared"
+
+_CACHE_KEEP_DIRS = {"prepared", "subs"}        # seekable copies (capped elsewhere), downloaded subtitles
+_CACHE_KEEP_FILES = {"speedtest.mp4", "splash.png"}
+_CACHE_AGES = {"emb_": 60 * 86400, "fp_": 180 * 86400}  # extracted subtitles, audio fingerprints: kept a while
+
+
+def clean_cache(dry_run=False, now=None):
+    """Remove what earlier runs left behind in the cache - mainly converted HLS pieces of
+    videos the app was closed in the middle of (they can add up to gigabytes) - plus the
+    per-stream subtitle copies and thumbnails. Folders used in the last 5 minutes and files
+    from the last day stay (another copy of the app may be playing). Returns (items, bytes)."""
+    now = now or time.time()
+    items = freed = 0
+    try:
+        entries = list(CACHE_DIR.iterdir())
+    except OSError:
+        return 0, 0
+    for p in entries:
+        try:
+            if p.is_dir():
+                if p.name in _CACHE_KEEP_DIRS:
+                    continue
+                files = [f for f in p.rglob("*") if f.is_file()]
+                last = max([p.stat().st_mtime] + [f.stat().st_mtime for f in files])
+                if now - last < 300:
+                    continue
+                size = sum(f.stat().st_size for f in files)
+                if not dry_run:
+                    shutil.rmtree(p, ignore_errors=True)
+            else:
+                if p.name in _CACHE_KEEP_FILES:
+                    continue
+                age = next((a for pre, a in _CACHE_AGES.items() if p.name.startswith(pre)), 86400)
+                st = p.stat()
+                if now - st.st_mtime < age:
+                    continue
+                size = st.st_size
+                if not dry_run:
+                    p.unlink()
+            items += 1
+            freed += size
+        except OSError:
+            continue
+    return items, freed
 PREP_KEEP = 4  # prepared videos kept on disk (the oldest go first)
 BELOW_NORMAL = 0x00004000 if sys.platform == "win32" else 0
 
@@ -1902,6 +1947,239 @@ def grab_frame(path, t, width=320):
 THROTTLE_KBPS = float(os.environ.get("VIDEOCASTER_THROTTLE_KBPS") or 0)
 
 
+# --------------------------------------------------------------------------- casting the PC screen
+
+def _com():
+    """ctypes helpers for the Windows audio (COM) interfaces: (ctypes, GUID, guid, call)."""
+    import ctypes
+    import uuid as _uuid
+    from ctypes import POINTER, c_ubyte, c_void_p, HRESULT, WINFUNCTYPE
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("raw", c_ubyte * 16)]
+
+    def guid(s):
+        g = GUID()
+        ctypes.memmove(ctypes.byref(g), _uuid.UUID(s).bytes_le, 16)
+        return g
+
+    def call(obj, index, *args, types=()):
+        vtbl = ctypes.cast(obj, POINTER(POINTER(c_void_p)))[0]
+        return WINFUNCTYPE(HRESULT, c_void_p, *types)(vtbl[index])(obj, *args)
+
+    return ctypes, GUID, guid, call
+
+
+def _speakers(objs):
+    """The default speakers (IMMDevice) and their volume control (IAudioEndpointVolume); the
+    COM objects are added to `objs` for releasing. Call with COM initialised in this thread."""
+    ctypes, GUID, guid, call = _com()
+    from ctypes import POINTER, byref, c_ulong, c_void_p
+    enum, dev, vol = c_void_p(), c_void_p(), c_void_p()
+    ctypes.OleDLL("ole32").CoCreateInstance(byref(guid("BCDE0395-E52F-467C-8E3D-C4579291692E")), None, 0x17,
+                                            byref(guid("A95664D2-9614-4F35-A746-DE8DB63617E6")), byref(enum))
+    objs.append(enum)
+    call(enum, 4, 0, 0, byref(dev), types=(c_ulong, c_ulong, POINTER(c_void_p)))  # eRender, eConsole
+    objs.append(dev)
+    call(dev, 3, byref(guid("5CDF2C82-841E-4546-9722-0CF74078229A")), 0x17, None, byref(vol),
+         types=(POINTER(GUID), c_ulong, c_void_p, POINTER(c_void_p)))
+    objs.append(vol)
+    return dev, vol
+
+
+def _volume_state(vol):
+    """(muted, volume 0..1, level in dB, volume done by the hardware) from an IAudioEndpointVolume."""
+    ctypes, _, _, call = _com()
+    from ctypes import POINTER, byref, c_float, c_int, c_ulong
+    mute, scalar, db, hw = c_int(), c_float(), c_float(), c_ulong()
+    call(vol, 15, byref(mute), types=(POINTER(c_int),))  # GetMute
+    call(vol, 9, byref(scalar), types=(POINTER(c_float),))  # GetMasterVolumeLevelScalar
+    call(vol, 8, byref(db), types=(POINTER(c_float),))  # GetMasterVolumeLevel
+    call(vol, 19, byref(hw), types=(POINTER(c_ulong),))  # QueryHardwareSupport
+    return bool(mute.value), float(scalar.value), float(db.value), bool(hw.value & 0x1)  # HARDWARE_SUPPORT_VOLUME
+
+
+def _release(objs):
+    _, _, _, call = _com()
+    for o in reversed(objs):
+        try:
+            call(o, 2)
+        except OSError:
+            pass
+
+
+def speaker_state():
+    """(muted, volume 0..1, level dB, hardware volume) of this PC's default speakers, or None.
+    Read only. Runs in its own thread (COM there, not in the window's thread)."""
+    if sys.platform != "win32":
+        return None
+    out = []
+
+    def run():
+        objs = []
+        try:
+            _com()[0].OleDLL("ole32").CoInitializeEx(None, 0)
+            _, vol = _speakers(objs)
+            out.append(_volume_state(vol))
+        except OSError:
+            pass
+        finally:
+            _release(objs)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(5)
+    return out[0] if out else None
+
+
+class LoopbackAudio:
+    """The sound this PC is playing (everything you'd hear from its speakers), recorded with
+    Windows' own WASAPI loopback - no extra software or 'Stereo Mix' device needed.
+    - Windows sends nothing while the PC is silent: silence is filled in, so the stream goes on.
+    - On most PCs Windows applies the volume slider before recording programs get the sound:
+      the PC's volume level is read and the sound boosted back to full strength for the TV,
+      so the PC can be turned down low. Muted gives silence (there's nothing to record then)."""
+
+    MAX_BOOST_DB = 45.0
+
+    def __init__(self):
+        self.fmt = None  # (ffmpeg sample format, rate, channels) once opened
+        self.stats = {"packets": 0, "silent": 0, "filled": 0, "muted": False, "boost_db": 0.0}
+        self._out = None
+        self._stop = threading.Event()
+        self._ready = threading.Event()
+        self._thread = None
+
+    def start(self, timeout=3.0):
+        """Open the default speakers for recording; (sample format, rate, channels) or None."""
+        if sys.platform != "win32":
+            return None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self._ready.wait(timeout)
+        return self.fmt
+
+    def attach(self, out):
+        """Send the recorded sound to `out` (ffmpeg's stdin) from now on."""
+        self._out = out
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        import numpy as np
+        ctypes, GUID, guid, call = _com()
+        from ctypes import POINTER, byref, c_uint32, c_ulong, c_void_p, c_ubyte
+        objs = []
+        client = None
+        pwfx = c_void_p()
+        try:
+            ctypes.OleDLL("ole32").CoInitializeEx(None, 0)
+            dev, vol = _speakers(objs)
+            client = c_void_p()
+            call(dev, 3, byref(guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2")), 0x17, None, byref(client),
+                 types=(POINTER(GUID), c_ulong, c_void_p, POINTER(c_void_p)))
+            objs.append(client)
+            call(client, 8, byref(pwfx), types=(POINTER(c_void_p),))  # GetMixFormat
+            tag, ch, rate, _, block, bits, extra = struct.unpack_from("<HHIIHHH", ctypes.string_at(pwfx, 18))
+            if tag == 0xFFFE and extra >= 22:  # WAVEFORMATEXTENSIBLE: the real format is in the SubFormat GUID
+                tag = struct.unpack_from("<H", ctypes.string_at(pwfx, 18 + extra), 24)[0]
+            fmt = {(3, 32): "f32le", (1, 16): "s16le", (1, 24): "s24le", (1, 32): "s32le"}.get((tag, bits))
+            if not fmt:
+                return
+            # shared mode, loopback, 200 ms buffer
+            call(client, 3, 0, 0x00020000, 2_000_000, 0, pwfx, None,
+                 types=(c_ulong, c_ulong, ctypes.c_longlong, ctypes.c_longlong, c_void_p, c_void_p))
+            cap = c_void_p()
+            call(client, 14, byref(guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317")), byref(cap),
+                 types=(POINTER(GUID), POINTER(c_void_p)))
+            objs.append(cap)
+            call(client, 10)  # Start
+            self.fmt = (fmt, rate, ch)
+            self._ready.set()
+            n, data, frames, flags = c_uint32(), POINTER(c_ubyte)(), c_uint32(), c_ulong()
+            next_size = lambda: call(cap, 5, byref(n), types=(POINTER(c_uint32),))
+            written, t0, gain, checked = 0, None, 1.0, 0.0
+            while not self._stop.is_set():
+                if time.time() - checked > 0.5:  # follow the volume slider
+                    checked = time.time()
+                    muted, _, db, hw = _volume_state(vol)
+                    boost = 0.0 if (hw or fmt != "f32le") else min(self.MAX_BOOST_DB, max(0.0, -db))
+                    gain = 10 ** (boost / 20)
+                    self.stats.update(muted=muted, boost_db=round(boost, 1))
+                out = self._out
+                next_size()
+                while n.value:
+                    call(cap, 3, byref(data), byref(frames), byref(flags), None, None,
+                         types=(POINTER(POINTER(c_ubyte)), POINTER(c_uint32), POINTER(c_ulong), c_void_p, c_void_p))
+                    count = frames.value
+                    silent = bool(flags.value & 0x2)  # AUDCLNT_BUFFERFLAGS_SILENT
+                    chunk = b"\0" * (count * block) if silent else ctypes.string_at(data, count * block)
+                    call(cap, 4, count, types=(c_uint32,))  # ReleaseBuffer
+                    self.stats["packets"] += 1
+                    self.stats["silent"] += silent
+                    if out is not None:
+                        if gain != 1.0 and not silent:
+                            chunk = (np.frombuffer(chunk, "<f4") * np.float32(gain)).astype("<f4").tobytes()
+                        out.write(chunk)
+                        written += count
+                    next_size()
+                if out is not None:
+                    t0 = t0 or time.perf_counter()
+                    due = int((time.perf_counter() - t0) * rate)
+                    if due - written > rate // 10:  # >100 ms behind the clock: nothing playing - fill in silence
+                        out.write(b"\0" * ((due - written) * block))
+                        self.stats["filled"] += due - written
+                        written = due
+                    out.flush()
+                time.sleep(0.01)
+        except (OSError, ValueError, BrokenPipeError):
+            pass  # ffmpeg ended (or no speakers): stop recording
+        finally:
+            self._ready.set()
+            out, self._out = self._out, None
+            if out is not None:  # close the pipe here, quietly (ffmpeg may be gone already)
+                try:
+                    out.close()
+                except (OSError, ValueError):
+                    pass
+            if client:
+                try:
+                    call(client, 11)  # Stop
+                except OSError:
+                    pass
+            _release(objs)
+            if pwfx:
+                ctypes.windll.ole32.CoTaskMemFree(pwfx)
+
+
+def screen_command(encoder, audio=None, monitor=0, fps=30, height=1080):
+    """ffmpeg arguments that capture a screen (Windows' Desktop Duplication, mouse pointer
+    included) plus the PC's sound from stdin (audio=(format, rate, channels); silence
+    without it), and send it as a live MP4 to stdout - small fragments, no B-frames, so the
+    TV gets it with as little delay as it allows."""
+    qsv = encoder == "h264_qsv"
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    if audio:
+        fmt, rate, ch = audio
+        cmd += ["-thread_queue_size", "1024", "-f", fmt, "-ar", str(rate), "-ac", str(ch), "-i", "pipe:0"]
+    else:
+        cmd += ["-re", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+    cmd += ["-filter_complex", f"ddagrab=output_idx={int(monitor)}:framerate={fps}:draw_mouse=1,hwdownload,"
+                               f"format=bgra,scale=-2:'min({height},ih)',format={'nv12' if qsv else 'yuv420p'}[v]",
+            "-map", "[v]", "-map", "0:a"]
+    if qsv:
+        cmd += ["-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", "6000k", "-maxrate", "8000k", "-bufsize", "4000k",
+                "-bf", "0", "-async_depth", "1"]
+    else:
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-crf", "23", "-maxrate", "8000k",
+                "-bufsize", "4000k"]
+    cmd += ["-g", str(fps), "-profile:v", "high", "-c:a", "aac", "-b:a", "160k", "-ac", "2",
+            "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-frag_duration", "250000",
+            "-flush_packets", "1", "pipe:1"]
+    return cmd
+
+
 class MediaHandler(BaseHTTPRequestHandler):
     """Serves only what the app registered for the TV: video files (with byte ranges,
     so the TV can seek), subtitles, thumbnails and live ffmpeg conversions. Every
@@ -1938,6 +2216,8 @@ class MediaHandler(BaseHTTPRequestHandler):
             return
         if entry["kind"] == "transcode":
             self._serve_transcode(entry, head)
+        elif entry["kind"] == "screen":
+            self._serve_screen(entry, head)
         elif entry["kind"] == "hls":
             self._serve_hls(entry, head)
         else:
@@ -2082,6 +2362,37 @@ class MediaHandler(BaseHTTPRequestHandler):
         finally:
             self.media.end_transcode(proc)
 
+    def _serve_screen(self, entry, head):
+        # the PC screen, live, for as long as the TV keeps reading
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Connection", "close")
+        self.send_header("Cache-Control", "no-cache")
+        self._cors()
+        self.end_headers()
+        if head:
+            return
+        proc, sound = self.media.start_screen(entry)
+        if proc is None:
+            return
+        try:
+            while True:
+                chunk = proc.stdout.read1(64 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                now = time.time()
+                entry.setdefault("first", now)
+                entry["last"] = now
+                entry["sent"] = entry.get("sent", 0) + len(chunk)
+        except OSError:
+            pass
+        finally:
+            if sound is not None:
+                sound.stop()
+            self.media.end_transcode(proc)
+
 
 class QuietHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
@@ -2130,9 +2441,31 @@ class MediaServer:
         parts = url_path.split("?", 1)[0].strip("/").split("/")
         if len(parts) >= 2 and parts[0] == "m":
             entry = self.tokens.get(parts[1])
-            if entry and os.path.isfile(entry["path"]):
+            if entry and (entry["kind"] == "screen" or os.path.isfile(entry["path"])):
                 return entry
         return None
+
+    def start_screen(self, entry):
+        """ffmpeg capturing the screen (and a LoopbackAudio feeding it the PC's sound):
+        (process, sound) or (None, None)."""
+        sound = LoopbackAudio() if entry.get("sound") else None
+        fmt = sound.start() if sound else None
+        if sound is not None and fmt is None:
+            sound.stop()
+            sound = None  # no speakers to record: send silence
+        try:
+            proc = subprocess.Popen(screen_command(entry.get("encoder", "libx264"), fmt, entry.get("monitor", 0)),
+                                    stdin=subprocess.PIPE if fmt else subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        except OSError:
+            if sound:
+                sound.stop()
+            return None, None
+        if sound is not None:
+            sound.attach(proc.stdin)
+        with self.lock:
+            self.transcodes.add(proc)
+        return proc, sound
 
     def start_transcode(self, entry):
         CACHE_DIR.mkdir(exist_ok=True)

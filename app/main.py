@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import backend as be  # noqa: E402
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal  # noqa: E402
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal  # noqa: E402
 from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QIcon, QImage, QKeySequence,  # noqa: E402
                            QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QShortcut,
                            QGuiApplication)
@@ -125,6 +125,14 @@ def _icon_pixmap(name, color, size=28):
         p.setPen(Qt.NoPen)
         p.setBrush(c)
         p.drawPolygon(QPolygonF([QPointF(9, 25), QPointF(14, 18.5), QPointF(19, 25)]))
+    elif name == "screen":  # a PC screen with an arrow going out of it
+        p.drawRoundedRect(QRectF(3.5, 4.5, 21, 14.5), 2, 2)
+        p.drawLine(QPointF(14, 19), QPointF(14, 23))
+        p.drawLine(QPointF(9, 23.5), QPointF(19, 23.5))
+        pen.setWidthF(2.0)
+        p.setPen(pen)
+        p.drawLine(QPointF(9.5, 15), QPointF(17, 8.5))
+        p.drawPolyline(QPolygonF([QPointF(12.5, 8.3), QPointF(17.2, 8.3), QPointF(17.2, 13)]))
     elif name in ("speaker", "speaker-off"):
         p.setPen(Qt.NoPen)
         p.setBrush(c)
@@ -1260,6 +1268,8 @@ class MainWindow(QWidget):
         self.gen = 0
         self.intro_busy = set()  # videos whose intro is being looked for
         self.intro_for = None    # the video whose intro countdown ran (or was cancelled)
+        self.screen = None       # while the PC screen is cast: {index, sound, player, since, playing}
+        self.screen_timer = QTimer(self, interval=2000, timeout=self._screen_poll)
         self.load_lock = threading.Lock()
         self.pending_seek = None
         self.seek_timer = QTimer(self, singleShot=True, interval=600, timeout=self._do_pending_seek)
@@ -1268,6 +1278,7 @@ class MainWindow(QWidget):
         self.next_suggestion = None   # the next episode found next to it on disk
         self.preparer = be.Preparer()  # makes a seekable copy of a live-streamed video
         self.prepared_pending = None
+        worker(self._clean_cache)  # what earlier runs left behind (closed mid-video, for example)
         self.server.on_rerequest = lambda entry: self.bridge.call.emit(lambda: self._tv_restarted(entry))
         self.player = None
         self.now_path = None
@@ -1344,10 +1355,12 @@ class MainWindow(QWidget):
         self.btn_stop = tool_button("stop", "Stop")
         self.btn_next = tool_button("next", "Next video")
         self.btn_gear = tool_button("gear", "Settings for this video")
+        self.btn_screen = tool_button("screen", "Cast this PC's screen to the TV")
         self.btn_cast = tool_button("cast", "Choose the TV")
         for b in (self.btn_list, self.btn_back, self.btn_play, self.btn_stop, self.btn_next):
             bl.addWidget(b)
         bl.addStretch()
+        bl.addWidget(self.btn_screen)
         bl.addWidget(self.btn_gear)
         bl.addWidget(self.btn_cast)
         leftcol.addWidget(bar)
@@ -1440,6 +1453,7 @@ class MainWindow(QWidget):
         self.btn_stop.clicked.connect(self.stop)
         self.btn_next.clicked.connect(self.play_next)
         self.btn_gear.clicked.connect(self.show_settings)
+        self.btn_screen.clicked.connect(self.screen_menu)
         self.btn_cast.clicked.connect(self.show_devices)
         self.btn_newlist.clicked.connect(self.new_playlist)
         self.tabs.currentChanged.connect(self._tab_changed)
@@ -1490,12 +1504,28 @@ class MainWindow(QWidget):
             if handle is not None:
                 handle.startSystemMove()
 
+    @staticmethod
+    def _clean_cache():
+        items, freed = be.clean_cache()
+        if items:
+            be.log(f"cache: removed {items} leftover item(s), {freed / 1e6:.0f} MB")
+
     def _restore_geometry(self):
         g = self.state.get("geometry")
         self.resize(WINDOW_W, 420)
         if g:
-            self.move(g.get("x", 200), g.get("y", 200))
-            self.resize(max(420, g.get("w", WINDOW_W)), max(TOP_H + 8, g.get("h", 420)))
+            x, y = g.get("x", 200), g.get("y", 200)
+            w, h = max(420, g.get("w", WINDOW_W)), max(TOP_H + 8, g.get("h", 420))
+            # The screen it was on last time may be gone (a second monitor unplugged): only use
+            # that spot if the top of the window lands on a screen now, else the main screen.
+            top = QRect(x, y, w, HEADER_H)
+            if not any(s.availableGeometry().intersected(top).width() >= 120
+                       and s.availableGeometry().intersected(top).height() >= 30 for s in QGuiApplication.screens()):
+                avail = QGuiApplication.primaryScreen().availableGeometry()
+                w, h = min(w, avail.width()), min(h, avail.height())
+                x, y = avail.x() + (avail.width() - w) // 2, avail.y() + (avail.height() - h) // 3
+            self.move(x, y)
+            self.resize(w, h)
         if not self.state.get("playlist_visible", True):
             self.list_area.hide()
             self.setFixedHeight(TOP_H + 8)
@@ -1978,6 +2008,8 @@ class MainWindow(QWidget):
         conn = self.conn
         if conn is None:
             return
+        if self.screen is not None:
+            self.end_screen(stop_tv=False)
         if self.player is not None:
             self.stop(picture=False)
         self.conn = None
@@ -1985,6 +2017,158 @@ class MainWindow(QWidget):
         worker(self._safe, conn.disconnect)
         self.flash(f"Disconnected from {conn.device.name}")
         self._update_header()
+
+    # ----- casting the PC screen
+    def screen_menu(self):
+        """The screen button's menu: which screen to cast, with or without the PC's sound, stop."""
+        self.build_screen_menu().exec(self.btn_screen.mapToGlobal(QPoint(0, self.btn_screen.height())))
+
+    def build_screen_menu(self):
+        m = QMenu(self)
+        tv = self.current_device()
+        head = m.addAction(f"Cast this PC's screen to {tv.name}" if tv else "Cast this PC's screen (choose a TV first)")
+        head.setEnabled(False)
+        screens = QGuiApplication.screens()
+        for i, sc in enumerate(screens):
+            g, r = sc.geometry(), sc.devicePixelRatio()
+            name = "Cast my screen" if len(screens) == 1 else f"Cast screen {i + 1}"
+            act = m.addAction(f"{name}  ({round(g.width() * r)} x {round(g.height() * r)})",
+                              lambda i=i: self.cast_screen(i))
+            act.setCheckable(True)
+            act.setChecked(self.screen is not None and self.screen["index"] == i)
+        m.addSeparator()
+        snd = m.addAction("With the PC's sound")
+        snd.setCheckable(True)
+        snd.setChecked(bool(self.state["global"].get("screen_sound", True)))
+        snd.toggled.connect(self._set_screen_sound)
+        if self.screen is not None:
+            m.addSeparator()
+            m.addAction("Stop casting the screen", lambda: self.end_screen(stop_tv=True))
+        return m
+
+    def _set_screen_sound(self, on):
+        self.state["global"]["screen_sound"] = bool(on)
+        self.save()
+        if self.screen is not None:  # cast again, now with (or without) the sound
+            self.cast_screen(self.screen["index"])
+
+    def cast_screen(self, index=0):
+        """Show this PC's screen (and play its sound) on the TV, live, until Stop."""
+        dev = self.current_device()
+        if dev is None:
+            QMessageBox.information(self, APP_NAME, "Choose a TV first: click the TV button at the top right.")
+            self.show_devices()
+            return
+        if not dev.online and not (self.conn is not None and self.conn.device is dev):
+            QMessageBox.warning(self, APP_NAME, f"{dev.name} isn't available right now. Check that it's switched on.")
+            return
+        if self.connecting:
+            return
+        if self.conn is None or self.conn.device is not dev:
+            self.connect_device(dev, then=lambda: self.cast_screen(index))
+            return
+        sound = bool(self.state["global"].get("screen_sound", True))
+        if sound and (be.speaker_state() or (False,))[0]:
+            QMessageBox.information(self, APP_NAME, "This PC is muted, so there's no sound to send to the TV.\n\n"
+                                    "Unmute it - a low volume is fine: the TV still gets the sound at full strength.")
+        # whatever played on the TV makes way (the new load replaces it there)
+        if self.player is not None:
+            self._save_resume()
+            self._upnext_cancel(None)
+            self._intro_cancel(None)
+            self.player, self.stream, self.now_path = None, None, None
+            self.play_state, self.loading = "idle", False
+        self.screen_timer.stop()
+        self.gen += 1
+        gen = self.gen
+        self.server.stop_transcodes()
+        player = self.conn
+        url = self.server.register("screen", "screen", name="screen.mp4", sound=sound, monitor=index,
+                                   encoder=self.encoder)
+        stream = {"url": url, "mime": "video/mp4", "title": "PC screen", "live": True}
+        self.screen = {"index": index, "sound": sound, "player": player, "since": time.time(), "playing": False}
+        be.log(f"casting screen {index + 1} to {dev.name} {'with' if sound else 'without'} sound")
+        screens = QGuiApplication.screens()
+        if index < len(screens):  # the screen itself as the picture next to the title
+            pm = screens[index].grabWindow(0)
+            self.thumb.pix = pm.scaled(THUMB_W * 2, TOP_H * 2, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.thumb.update()
+        self.btn_screen.setIcon(draw_icon("screen", ACCENT_DARK))
+        self._update_header("Starting...")
+        self._update_buttons()
+
+        def work():
+            try:
+                with self.load_lock:
+                    if gen != self.gen:
+                        return
+                    player.connect()
+                    player.load(stream, 0)
+            except Exception as e:
+                msg = str(e) or e.__class__.__name__
+                self.bridge.call.emit(lambda: self.end_screen(stop_tv=False, why=f"Couldn't cast the screen: {msg}")
+                                      if gen == self.gen else None)
+
+        worker(work)
+        self.screen_timer.start()
+
+    def _screen_poll(self):
+        """Every 2 s while the screen is cast: has the TV started it, or stopped it?"""
+        s = self.screen
+        if s is None:
+            self.screen_timer.stop()
+            return
+        p = s["player"]
+
+        def work():
+            try:
+                if int(time.time()) % 6 < 2:
+                    p.refresh()
+                st = p.state()[0]
+            except Exception:
+                st = "error"
+            self.bridge.call.emit(lambda: self._screen_state(s, st))
+
+        worker(work)
+
+    def _screen_state(self, s, st):
+        if s is not self.screen:
+            return
+        if st in ("playing", "buffering", "paused"):
+            if not s["playing"] and st == "playing":
+                be.log(f"screen on the TV after {time.time() - s['since']:.1f}s")
+            s["playing"] = s["playing"] or st == "playing"
+        elif st in ("idle", "finished", "error") and (s["playing"] or time.time() - s["since"] > 45):
+            self.end_screen(stop_tv=False, why="The TV couldn't show the screen" if st == "error" and not s["playing"]
+                            else "Screen casting stopped on the TV")
+            return
+        self._update_header()
+
+    def end_screen(self, stop_tv=True, picture=True, why=None):
+        """Stop casting the screen (and stop the TV showing it, unless something else takes over)."""
+        s, self.screen = self.screen, None
+        if s is None:
+            return
+        self.screen_timer.stop()
+        self.gen += 1
+        self.server.stop_transcodes()
+        if stop_tv:
+            p, splash = s["player"], (self.splash_url() if picture else None)
+
+            def work():
+                with self.load_lock:
+                    self._safe(p.stop)
+                    if splash:
+                        self._safe(p.show_picture, splash)
+
+            worker(work)
+        be.log("screen casting ended" + (f": {why}" if why else ""))
+        self.btn_screen.setIcon(draw_icon("screen", ACCENT))
+        self.thumb.set_png(None)
+        self._update_header()
+        self._update_buttons()
+        if why:
+            self.flash(why, 5)
 
     def run_speed_test(self):
         conn = self.conn
@@ -2090,6 +2274,8 @@ class MainWindow(QWidget):
         self._start(path, start)
 
     def _start(self, path, start, status="Connecting..."):
+        if self.screen is not None:  # a video takes the TV over from the screen
+            self.end_screen(stop_tv=False)
         dev = self.current_device()
         if dev is None:
             QMessageBox.information(self, APP_NAME, "Choose a TV first: click the TV button at the top right.")
@@ -2240,6 +2426,9 @@ class MainWindow(QWidget):
         QMessageBox.warning(self, APP_NAME, f"Could not start playback.\n\n{msg}")
 
     def stop(self, keep_header=False, picture=True):
+        if self.screen is not None:  # Stop while the screen is on the TV ends that
+            self.end_screen(stop_tv=True, picture=picture)
+            return
         self._save_resume()
         self._upnext_cancel(None)
         self.gen += 1  # cancels a start that is still on its way to the TV
@@ -2738,6 +2927,18 @@ class MainWindow(QWidget):
         self.time.setText(text)
 
     def _update_header(self, status=None):
+        if self.screen is not None:
+            s = self.screen
+            self.title.setText("Your screen" if len(QGuiApplication.screens()) == 1 else f"Screen {s['index'] + 1}")
+            if status:
+                self.time.setText(status)
+            elif time.time() >= self.message_until:
+                self.time.setText(f"Casting to {s['player'].device.name}"
+                                  + (" with sound" if s["sound"] else " without sound")
+                                  + ("" if s["playing"] else " - starting..."))
+            self.seek.duration = 0
+            self.seek.set_fraction(0)
+            return
         path = self.now_path or self.selected_path()
         name = Path(path).name if path else APP_NAME
         fm = QFontMetrics(self.title.font())
@@ -2762,6 +2963,12 @@ class MainWindow(QWidget):
     def _update_buttons(self):
         """Grey out what can't be used now, like Airflow: back, stop and next only while a
         video is on the TV; next only if something comes after it."""
+        if self.screen is not None:  # the screen on the TV: only Stop (and the screen menu)
+            self.btn_play.setIcon(draw_icon("play", ACCENT))
+            for b in (self.btn_back, self.btn_next, self.btn_play):
+                b.setEnabled(False)
+            self.btn_stop.setEnabled(True)
+            return
         playing = self.player is not None and self.play_state in ("playing", "buffering")
         self.btn_play.setIcon(draw_icon("pause" if playing else "play", ACCENT))
         active = self.player is not None and bool(self.now_path)

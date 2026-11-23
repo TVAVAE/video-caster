@@ -10,7 +10,8 @@ is also available; it needs a separate FFmpeg installation.
 
 Whatever the TV can't play by itself (H.265 10-bit, odd containers, DTS audio, picture
 subtitles, ...) is converted on the fly while it plays, on the graphics chip when the PC has
-one. You can still skip and rewind with the app or with the TV remote.
+one. You can still skip and rewind with the app or with the TV remote. Or put your whole PC
+screen on the TV, with its sound.
 
 <p align="center">
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing, with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
@@ -55,6 +56,11 @@ one. You can still skip and rewind with the app or with the TV remote.
 - **Skip intros**: a series' opening titles are found by comparing the sound of two episodes in
   the same folder; when they start, a 5-second countdown skips them.
 - Pause with the TV remote during a countdown to cancel it. Both can be switched off.
+
+**Your screen**
+- **Cast your screen**: the screen button shows your whole PC screen (mouse pointer included)
+  on the TV, live, with the PC's sound. Handy for a website, photos or a presentation. The TV
+  shows it a few seconds late, so it's not for games.
 
 **TVs**
 - Chromecast, Google TV and TVs with Chromecast built-in - found automatically on your network.
@@ -144,6 +150,17 @@ networks** - the TV fetches the video from a small web server in the app.
   <img src="docs/settings.png" alt="The settings panel: audio, subtitles, picture, conversion and episode options" width="540">
 </p>
 
+To show your **whole screen** instead, click the **screen button** (the screen with an arrow,
+next to the gear) and choose *Cast my screen* - or one of your screens if you have more. In
+the same menu, *With the PC's sound* switches the sound on or off. *Stop* (or the TV remote)
+ends it; playing a video takes over.
+
+- The sound is recorded as Windows plays it, so the PC must **not be muted**. A low volume is
+  fine: the TV still gets the sound at full strength, and you don't hear the PC and the TV a
+  few seconds apart.
+- No extra software is needed: the screen is captured with Windows' Desktop Duplication (via
+  FFmpeg) and the sound with Windows' own audio loopback.
+
 The bar at the bottom of the settings says whether the video is played as it is or converted,
 and why. Every option has a **?** with an explanation. A few worth knowing:
 
@@ -196,7 +213,8 @@ key and press *Save* to stop using it.
 
 ## Privacy
 
-Everything stays on your own network: the app talks only to your TVs. Only when you use the
+Everything stays on your own network: the app talks only to your TVs (a cast screen goes only
+to the TV you picked, and only while it's on). Only when you use the
 online subtitle search, the video's file name, size and fingerprint (OpenSubtitles' file hash)
 are sent to Stremio's subtitle service (`strem.io`) - and to OpenSubtitles.com if you added
 your own API key.
@@ -208,7 +226,7 @@ your own API key.
 | `app/main.py` | The window (PySide6 / Qt) |
 | `app/backend.py` | The engine: finding TVs, the media server, deciding how to play each file, FFmpeg, HLS, subtitles, credits and intro detection, OpenSubtitles |
 | `app/state.json` | Your playlists, settings and watch progress (created on first run) |
-| `app/cache/` | Converted pieces, thumbnails, extracted subtitles - can be emptied while the app is closed |
+| `app/cache/` | Converted pieces, thumbnails, extracted subtitles - leftovers are cleaned up automatically when the app starts |
 | `app/videocaster.log` | What happened during playback - handy when something goes wrong |
 
 The last three are personal or temporary and are kept out of git by `.gitignore`.
@@ -227,6 +245,8 @@ instead of `app/`.
 - **Sound but no picture** - the app normally restarts the TV's player by itself; if not,
   *Disconnect* and connect again.
 - **No sound with Passthrough** - your TV or soundbar doesn't take Dolby; choose *Stereo Downmix*.
+- **No sound when casting the screen** - unmute the PC (a low volume is enough), and check that
+  *With the PC's sound* is ticked in the screen button's menu.
 - **Playback stutters** - run the *Speed Test*, or set *Quality* lower. On a weak connection the
   app switches to adaptive streaming by itself.
 - Details are in `app/videocaster.log`; *Troubleshooting* in the settings shows the setup and
