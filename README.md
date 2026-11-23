@@ -21,6 +21,18 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing, with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
+## What's new in 0.2.0
+
+- **Cast your screen**: a new button puts your whole PC screen on the TV, live, with the PC's
+  sound - see [Cast your screen](#cast-your-screen).
+- **A logo of its own**: for the app, its taskbar button, the shortcuts and the installer.
+- **Closing never freezes**, also when a TV the app knows doesn't answer (switched off, or the
+  PC is on another network).
+- **The window always opens on your screen**, also after a second monitor was unplugged.
+- **The cache cleans itself**: leftovers of videos closed mid-way are removed when the app starts.
+
+Earlier versions and downloads: [releases](https://github.com/TVAVAE/video-caster/releases).
+
 ## Features
 
 **Playback**
@@ -64,7 +76,7 @@ screen on the TV, with its sound.
 **Your screen**
 - **Cast your screen**: the screen button shows your whole PC screen (mouse pointer included)
   on the TV, live, with the PC's sound. Handy for a website, photos or a presentation. The TV
-  shows it a few seconds late, so it's not for games.
+  shows it a few seconds late, so it's not for games. No extra software needed.
 
 **TVs**
 - Chromecast, Google TV and TVs with Chromecast built-in - found automatically on your network.
@@ -154,17 +166,6 @@ networks** - the TV fetches the video from a small web server in the app.
   <img src="docs/settings.png" alt="The settings panel: audio, subtitles, picture, conversion and episode options" width="540">
 </p>
 
-To show your **whole screen** instead, click the **screen button** (the screen with an arrow,
-next to the gear) and choose *Cast my screen* - or one of your screens if you have more. In
-the same menu, *With the PC's sound* switches the sound on or off. *Stop* (or the TV remote)
-ends it; playing a video takes over.
-
-- The sound is recorded as Windows plays it, so the PC must **not be muted**. A low volume is
-  fine: the TV still gets the sound at full strength, and you don't hear the PC and the TV a
-  few seconds apart.
-- No extra software is needed: the screen is captured with Windows' Desktop Duplication (via
-  FFmpeg) and the sound with Windows' own audio loopback.
-
 The bar at the bottom of the settings says whether the video is played as it is or converted,
 and why. Every option has a **?** with an explanation. A few worth knowing:
 
@@ -175,6 +176,31 @@ and why. Every option has a **?** with an explanation. A few worth knowing:
 | *Force Conversion* | Converts even when the TV could play the file (e.g. if it plays badly). |
 | *Accelerate* | Use the graphics chip for converting; *Scrubbing* shows previews while dragging the seek bar. |
 | *Up next at the credits* / *Skip intros* | Switch the series countdowns on or off. |
+
+The settings are kept per PC: they apply to whichever TV you cast to.
+
+### Cast your screen
+
+To show your **whole PC screen** on the TV, click the **screen button** (the screen with an
+arrow, next to the gear) and choose *Cast my screen* - or one of your screens if you have more.
+If no TV is chosen yet, the app asks for one first.
+
+<p align="center">
+  <img src="docs/screen-menu.png" alt="The screen button's menu: Cast this PC's screen to Living Room TV, Cast my screen (1920 x 1200), With the PC's sound" width="256">
+</p>
+
+- The window shows *Your screen - Casting to ... with sound*; only *Stop* is used meanwhile.
+  *Stop*, stopping with the TV remote, or playing a video ends it.
+- *With the PC's sound* (in the same menu) switches the sound on or off; changing it while
+  casting starts again with the new choice.
+- The sound is recorded as Windows plays it, so the PC must **not be muted** - the app warns you
+  if it is. A low volume is fine: the TV still gets the sound at full strength, and you don't
+  hear the PC and the TV a few seconds apart.
+- The TV shows the screen a few seconds late: fine for a website, photos, a presentation or a
+  video playing in the browser, not for games.
+- No extra software is needed: the screen is captured with Windows' Desktop Duplication (via
+  FFmpeg, on the graphics chip when the PC has one) and the sound with Windows' own audio
+  loopback. Your screen goes only to the TV you picked, and only while casting.
 
 ### Keyboard
 
@@ -228,7 +254,9 @@ your own API key.
 | Path | What |
 | --- | --- |
 | `app/main.py` | The window (PySide6 / Qt) |
-| `app/backend.py` | The engine: finding TVs, the media server, deciding how to play each file, FFmpeg, HLS, subtitles, credits and intro detection, OpenSubtitles |
+| `app/backend.py` | The engine: finding TVs, the media server, deciding how to play each file, FFmpeg, HLS, subtitles, credits and intro detection, OpenSubtitles, casting the screen |
+| `app/assets/` | The logo: `videocaster.ico` (exe, installer, shortcuts) and the window and taskbar icons |
+| `tools/make_icon.py` | Draws the logo - change it there and run `python tools\make_icon.py` |
 | `app/state.json` | Your playlists, settings and watch progress (created on first run) |
 | `app/cache/` | Converted pieces, thumbnails, extracted subtitles - leftovers are cleaned up automatically when the app starts |
 | `app/videocaster.log` | What happened during playback - handy when something goes wrong |
@@ -239,8 +267,9 @@ instead of `app/`.
 
 ## Troubleshooting
 
-- **The TV isn't listed** - check that the PC and the TV are on the same network, then use
-  *Search again* in the TV menu.
+- **The TV isn't listed** - the PC and the TV must be on the same network (not a work, guest or
+  phone-hotspot Wi-Fi), and in Windows that network should be **Private**: on a *Public* network
+  Windows blocks the TVs. Then use *Search again* in the TV menu.
 - **The TV shows nothing or can't load the video** - allow Video Caster (or Python when running from source) through Windows Firewall on
   private networks. *Troubleshooting* (in the settings) shows the address the TV must reach.
 - **Couldn't connect to a TV** - check that it is awake and on the same home network,
@@ -253,6 +282,11 @@ instead of `app/`.
   *With the PC's sound* is ticked in the screen button's menu.
 - **Playback stutters** - run the *Speed Test*, or set *Quality* lower. On a weak connection the
   app switches to adaptive streaming by itself.
+- **The window doesn't appear** - it opens where it was last closed; since 0.2.0 it moves back
+  to your main screen when that spot is on a monitor that's no longer connected.
+- **An old icon on the desktop after upgrading** - Windows keeps showing the icon it stored for
+  the shortcut. Run `ie4uinit.exe -show` (or sign out and in again). Since 0.2.0 the shortcuts
+  use their own icon file, so later upgrades show the right one.
 - Details are in `app/videocaster.log`; *Troubleshooting* in the settings shows the setup and
   lets you copy it. For the executable, the log is `%LOCALAPPDATA%\Video Caster\videocaster.log`.
 
@@ -298,17 +332,21 @@ a console. Remove that environment variable before making the normal windowed bu
 
 ### Build the Windows installer
 
-Install [Inno Setup 7](https://jrsoftware.org/inno-setup/downloads) and extract a
+Install [Inno Setup](https://jrsoftware.org/isdl.php) (version 6.7 or later; for example
+`winget install JRSoftware.InnoSetup`) and extract a
 [Gyan FFmpeg full build](https://www.gyan.dev/ffmpeg/builds/) (the full build includes
-Chromaprint). Point at the extracted folder containing `bin` and `LICENSE`:
+Chromaprint and the screen capture *Cast your screen* needs). Point at the extracted folder
+containing `bin` and `LICENSE`, and at Inno Setup's `ISCC.exe` (winget installs it in
+`%LOCALAPPDATA%\Programs\Inno Setup 6` for the current user):
 
 ```powershell
-.\build-installer.ps1 -FFmpegDirectory "C:\Tools\ffmpeg" -ISCC "C:\Program Files\Inno Setup 7\ISCC.exe"
+.\build-installer.ps1 -FFmpegDirectory "C:\Tools\ffmpeg" -ISCC "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
 ```
 
 This builds the app and **`dist\VideoCaster-Setup.exe`**. Use `-SkipAppBuild` to package
-an already built `dist\VideoCaster.exe`, or `-Version "0.1.1"` to set the installer
-version. `installer/VideoCaster.iss` defines installation, shortcuts, optional private
+an already built `dist\VideoCaster.exe`, or `-Version "0.2.1"` to set the installer
+version (the default is the current release, 0.2.0). The exe, installer and shortcut icons
+come from `app/assets/videocaster.ico`. `installer/VideoCaster.iss` defines installation, shortcuts, optional private
 network firewall rules, and uninstall. FFmpeg's license and build information are
 installed with it. Downloaded tools and staged payloads are not committed to Git.
 
