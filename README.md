@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="Video Caster logo: a white play triangle sending waves out, on a purple tile" width="112">
+</p>
+
 # Video Caster
 
 Play the videos on your Windows PC on your TV - a Chromecast, a TV with Chromecast built-in,

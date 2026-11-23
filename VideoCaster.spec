@@ -16,6 +16,8 @@ for package in ("pyatv", "pychromecast", "zeroconf"):
     binaries += package_binaries
     hiddenimports += package_imports
 datas += copy_metadata("pyatv", recursive=True)
+# The logo (window and taskbar icon); tools/make_icon.py draws it.
+datas.append((str(root / "app" / "assets"), "assets"))
 # Some Python runtimes ship an additional trust-policy file beside ssl.py.
 # ssl.SSLContext reads it relative to __file__, including inside a frozen app.
 # Preserve it rather than changing or disabling certificate validation.
@@ -47,4 +49,5 @@ exe = EXE(
     strip=False,
     upx=False,
     console=console,
+    icon=str(root / "app" / "assets" / "videocaster.ico"),
 )

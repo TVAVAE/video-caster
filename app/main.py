@@ -181,6 +181,17 @@ def _icon_pixmap(name, color, size=28):
     return pm
 
 
+def app_icon():
+    """The Video Caster logo (app/assets, drawn by tools/make_icon.py) in every size it has."""
+    icon = QIcon()
+    folder = Path(__file__).resolve().parent / "assets"
+    for n in (16, 24, 32, 48, 64, 256):
+        f = folder / f"icon_{n}.png"
+        if f.exists():
+            icon.addFile(str(f), QSize(n, n))
+    return icon
+
+
 def tool_button(icon_name, tip, size=30, color=None):
     b = QToolButton()
     b.setIcon(draw_icon(icon_name, color or ACCENT))
@@ -1552,15 +1563,33 @@ class MainWindow(QWidget):
     def closeEvent(self, e):
         self._save_resume()
         self.preparer.cancel()  # don't leave ffmpeg running after the app closes
-        if self.conn is not None:  # the TV streams from this app: close the receiver before the server goes
-            try:
-                self.conn.disconnect()
-            except Exception:
-                pass
-        self.server.stop()
-        self.discovery.stop()
+        self.screen_timer.stop()
+        self.server.stop_transcodes()  # quick: every conversion and screen capture ends now
         self.settings_panel.hide()
         self.save()
+        # Saying goodbye to the TV and stopping the TV search can take long: a TV the app
+        # saw before that doesn't answer (switched off, or another network) holds the search
+        # up for up to 30 s. Do it in the background and wait a few seconds at most, so
+        # closing never freezes the window.
+        conn, server, discovery = self.conn, self.server, self.discovery
+
+        def goodbye():
+            if conn is not None:  # the TV streams from this app: close the receiver before the server goes
+                try:
+                    conn.disconnect()
+                except Exception:
+                    pass
+            for fn in (server.stop, discovery.stop):
+                try:
+                    fn()
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=goodbye, daemon=True)
+        t.start()
+        self.hide()
+        QApplication.processEvents()
+        t.join(3)
         super().closeEvent(e)
 
     def save(self):
@@ -3107,8 +3136,15 @@ def main():
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         sys.exit(0 if report["connected"] else 1)
 
+    if sys.platform == "win32":  # the taskbar shows the app's own icon, not Python's
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("VideoCaster.App")
+        except Exception:
+            pass
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
+    app.setWindowIcon(app_icon())
     app.setFont(QFont("Segoe UI", 9))
     win = MainWindow(args.state, discover=not args.no_discovery)
     if args.files:
@@ -3120,7 +3156,12 @@ def main():
             win.close()
             app.quit()
         QTimer.singleShot(2500, snap)
-    sys.exit(app.exec())
+    code = app.exec()
+    # Everything is saved by now. A network library thread still waiting for a TV that
+    # doesn't answer must not keep an invisible app running: then leave right away.
+    if any(t.is_alive() and not t.daemon for t in threading.enumerate() if t is not threading.main_thread()):
+        os._exit(code)
+    sys.exit(code)
 
 
 if __name__ == "__main__":

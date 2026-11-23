@@ -32,7 +32,10 @@ Compression=lzma2/fast
 SolidCompression=yes
 CloseApplications=yes
 RestartApplications=no
-UninstallDisplayIcon={app}\VideoCaster.exe
+UninstallDisplayIcon={app}\VideoCaster.ico
+SetupIconFile=..\app\assets\videocaster.ico
+; tells Explorer at the end that icons changed
+ChangesAssociations=yes
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
@@ -41,10 +44,13 @@ Name: privatefirewall; Description: "Allow TVs to connect on private local netwo
 [Files]
 Source: "{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The logo as its own file for the shortcuts: Windows caches a shortcut's icon by the file it
+; comes from, so shortcuts that took it from VideoCaster.exe kept showing an older icon
+Source: "..\app\assets\videocaster.ico"; DestDir: "{app}"; DestName: "VideoCaster.ico"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Video Caster"; Filename: "{app}\VideoCaster.exe"
-Name: "{autodesktop}\Video Caster"; Filename: "{app}\VideoCaster.exe"; Tasks: desktopicon
+Name: "{group}\Video Caster"; Filename: "{app}\VideoCaster.exe"; IconFilename: "{app}\VideoCaster.ico"
+Name: "{autodesktop}\Video Caster"; Filename: "{app}\VideoCaster.exe"; IconFilename: "{app}\VideoCaster.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Video Caster - Private TCP"" program=""{app}\VideoCaster.exe"""; Flags: runhidden; Check: IsAdminInstallMode
