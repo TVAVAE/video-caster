@@ -24,7 +24,8 @@ from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, Q
 from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QIcon, QImage, QKeySequence,  # noqa: E402
                            QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QShortcut,
                            QGuiApplication)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,  # noqa: E402
+from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QButtonGroup,  # noqa: E402
+                               QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
                                QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
                                QPlainTextEdit, QPushButton, QSizeGrip, QSlider, QStyle, QStyledItemDelegate, QTabBar,
@@ -133,6 +134,20 @@ def _icon_pixmap(name, color, size=28):
         p.setPen(pen)
         p.drawLine(QPointF(9.5, 15), QPointF(17, 8.5))
         p.drawPolyline(QPolygonF([QPointF(12.5, 8.3), QPointF(17.2, 8.3), QPointF(17.2, 13)]))
+    elif name == "screens":  # this PC's screen and the TV next to it: the TV as a second display
+        pen.setWidthF(2.0)
+        p.setPen(pen)
+        p.drawRoundedRect(QRectF(2.5, 9.5, 10, 8), 1.5, 1.5)
+        p.drawLine(QPointF(7.5, 17.5), QPointF(7.5, 20.5))
+        p.drawLine(QPointF(5, 21), QPointF(10, 21))
+        p.drawRoundedRect(QRectF(14.5, 5.5, 11.5, 13), 1.5, 1.5)
+        p.drawLine(QPointF(20.25, 18.5), QPointF(20.25, 22))
+        p.drawLine(QPointF(17, 22.5), QPointF(23.5, 22.5))
+    elif name == "bolt":
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+        p.drawPolygon(QPolygonF([QPointF(16, 3), QPointF(6, 16), QPointF(13, 16), QPointF(11, 25),
+                                 QPointF(22, 11), QPointF(15, 11)]))
     elif name in ("speaker", "speaker-off"):
         p.setPen(Qt.NoPen)
         p.setBrush(c)
@@ -179,6 +194,24 @@ def _icon_pixmap(name, color, size=28):
         p.drawPolygon(QPolygonF([QPointF(8, 24.5), QPointF(4.5, 18), QPointF(11.5, 18.5)]))
     p.end()
     return pm
+
+
+def dot_icon(color, hollow=False, size=14):
+    """A small status dot (the TV chip: connected, connecting, ...)."""
+    pm = QPixmap(size * 2, size * 2)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    c = QColor(color)
+    if hollow:
+        p.setPen(QPen(c, 2.6))
+        p.setBrush(Qt.NoBrush)
+    else:
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+    p.drawEllipse(QRectF(size * 0.55, size * 0.55, size * 0.9, size * 0.9))
+    p.end()
+    return QIcon(pm)
 
 
 def app_icon():
@@ -524,14 +557,62 @@ class PlaylistView(QListWidget):
                 self.filesDropped.emit(vids, self._target_row(e))
             e.acceptProposedAction()
 
+    empty = None  # the EmptyState shown over the list while it has no videos
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self.empty is not None:
+            self.empty.setGeometry(self.viewport().rect())
+
     def paintEvent(self, e):
         super().paintEvent(e)
-        if self.count() == 0:
+        if self.count() == 0 and self.empty is None:
             p = QPainter(self.viewport())
             p.setPen(QColor("#8a8a92"))
             p.setFont(QFont("Segoe UI", 10))
             p.drawText(self.viewport().rect(), Qt.AlignCenter,
                        "Drop videos or folders here\nor right-click to add files")
+
+
+class EmptyState(QWidget):
+    """What an empty playlist shows: the three things Video Caster puts on the TV. Dropped
+    files still reach the playlist (this widget doesn't take drops), right-click still gives
+    the playlist's menu."""
+
+    def __init__(self, view, win):
+        super().__init__(view.viewport())
+        self.view = view
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 10, 16, 12)
+        lay.setSpacing(10)
+        lay.addStretch(1)
+        head = QLabel("What would you like on the TV?")
+        head.setStyleSheet("font-size: 13px; font-weight: bold; color: #3a3a42; background: transparent;")
+        lay.addWidget(head)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.play = ChoiceCard("play", "Play videos", "Drop them here")
+        self.mirror = ChoiceCard("screen", "Mirror my screen", "Show what you see")
+        self.extend = ChoiceCard("screens", "Second display", "Work here, show there")
+        self.play.setToolTip("Add videos or folders, then double-click one to play it on the TV")
+        self.mirror.setToolTip("The TV shows your screen as you see it, with the PC's sound")
+        self.extend.setToolTip("An extra screen next to yours, on the TV: drag windows onto it")
+        for c in (self.play, self.mirror, self.extend):
+            c.setCheckable(False)
+            c.setMinimumWidth(96)
+            row.addWidget(c)
+        lay.addLayout(row)
+        hint = QLabel("Drop videos and folders anywhere here. Right-click for more.")
+        hint.setStyleSheet("font-size: 11px; color: #85858d; background: transparent;")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        lay.addStretch(2)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(
+            lambda pos: view.customContextMenuRequested.emit(self.mapTo(view.viewport(), pos)))
+        self.play.clicked.connect(win.add_files_dialog)
+        self.mirror.clicked.connect(lambda: win.share_panel.open_at(win.btn_screen, "mirror"))
+        self.extend.clicked.connect(lambda: win.share_panel.open_at(win.btn_screen, "extend"))
 
 
 class DeviceRow(QWidget):
@@ -689,6 +770,306 @@ class DevicePanel(QFrame):
     def _volume(self):
         if not self.loading and self.player:
             worker(MainWindow._safe, self.player.set_volume, self.slider.value() / 100.0)
+
+
+# --------------------------------------------------------------------------- sharing the screen
+
+class ToggleSwitch(QAbstractButton):
+    """A small on/off switch."""
+
+    def __init__(self, tip=""):
+        super().__init__()
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setFixedSize(36, 20)
+        self.setToolTip(tip)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        on = self.isChecked()
+        p.setPen(Qt.NoPen)
+        p.setBrush((ACCENT if on else QColor("#c4c4cb")) if self.isEnabled() else QColor("#e2e2e6"))
+        p.drawRoundedRect(QRectF(0, 2, 36, 16), 8, 8)
+        p.setBrush(QColor("white"))
+        p.drawEllipse(QRectF(19 if on else 3, 4, 12, 12))
+
+
+class ChoiceCard(QAbstractButton):
+    """One of the share panel's two big choices: an icon, a title and one line under it."""
+
+    def __init__(self, icon, title, line):
+        super().__init__()
+        self.icon_name, self.title, self.line = icon, title, line
+        self.setText(title)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAttribute(Qt.WA_Hover)
+        self.setFixedHeight(88)
+        self.setMinimumWidth(160)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        on = self.isChecked()
+        p.setPen(QPen(ACCENT if on else QColor("#d4d4da"), 2 if on else 1))
+        p.setBrush(QColor("#f7f1fb") if on else QColor("#fafafb") if self.underMouse() else QColor("white"))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 8, 8)
+        pm = _icon_pixmap(self.icon_name, ACCENT if on else QColor("#8a8a92"), 26)
+        p.drawPixmap(QRectF(12, 11, 26, 26), pm, QRectF(pm.rect()))
+        f = QFont("Segoe UI", 10)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor("#222"))
+        p.drawText(QRectF(12, 42, self.width() - 20, 20), Qt.AlignLeft | Qt.AlignVCenter, self.title)
+        f = QFont("Segoe UI", 9)
+        p.setFont(f)
+        p.setPen(QColor("#6b6b73"))
+        p.drawText(QRectF(12, 62, self.width() - 20, 18), Qt.AlignLeft | Qt.AlignVCenter,
+                   QFontMetrics(f).elidedText(self.line, Qt.ElideRight, self.width() - 22))
+
+
+class SharePanel(QFrame):
+    """The screen button's panel: mirror this PC's screen or use the TV as a second display,
+    which screen, sound and delay - then Start sharing (or Switch / Stop while it's on)."""
+
+    def __init__(self, win):
+        super().__init__(None, Qt.Popup | Qt.FramelessWindowHint)
+        self.win = win
+        self.loading = False
+        self.muted = False
+        self.screen_list = []
+        self.setObjectName("sharepanel")
+        self.setFixedWidth(392)
+        self.setStyleSheet(f"""
+            #sharepanel {{ background: white; border: 1px solid #b8b8c0; }}
+            QLabel {{ font-size: 12px; color: #222; background: transparent; }}
+            QLabel#hint, QLabel#section {{ font-size: 11px; color: #75757d; }}
+            QFrame#sep {{ background: #e8e8eb; border: none; }}
+            QPushButton {{ min-height: 26px; padding: 2px 14px; border: 1px solid #b8b8c0; border-radius: 4px;
+                          background: white; font-size: 12px; color: #222; }}
+            QPushButton:hover {{ background: #f4eef8; }}
+            QPushButton#start {{ background: {ACCENT.name()}; border: 1px solid {ACCENT.name()}; color: white;
+                                font-weight: bold; }}
+            QPushButton#start:hover {{ background: {ACCENT_DARK.name()}; }}
+            QPushButton#stop {{ color: #b3261e; border-color: #e3b0ab; }}
+            QPushButton#stop:hover {{ background: #fbeeec; }}
+            QPushButton#screen {{ padding: 2px 10px; font-size: 11px; }}
+            QPushButton#screen:checked {{ border: 2px solid {ACCENT.name()}; color: {ACCENT_DARK.name()};
+                                         background: #f7f1fb; }}
+        """)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 12)
+        lay.setSpacing(0)
+        head = QWidget()
+        head.setStyleSheet(f"background: {ACCENT.name()};")
+        hl = QVBoxLayout(head)
+        hl.setContentsMargins(14, 9, 14, 9)
+        hl.setSpacing(1)
+        heading = QLabel("Show your screen on the TV")
+        heading.setStyleSheet("color: white; font-size: 13px; font-weight: bold;")
+        self.tv = QLabel()
+        self.tv.setStyleSheet("color: #f3e9f9; font-size: 11px;")
+        hl.addWidget(heading)
+        hl.addWidget(self.tv)
+        lay.addWidget(head)
+        body = QVBoxLayout()
+        body.setContentsMargins(14, 12, 14, 0)
+        body.setSpacing(8)
+        cards = QHBoxLayout()
+        cards.setSpacing(8)
+        self.mirror = ChoiceCard("screen", "Mirror my screen", "The TV shows what you see")
+        self.extend = ChoiceCard("screens", "Second display", "Drag windows onto the TV")
+        self.modes = QButtonGroup(self)
+        for c in (self.mirror, self.extend):
+            self.modes.addButton(c)
+            cards.addWidget(c)
+            c.toggled.connect(lambda on: on and self._refresh())
+        body.addLayout(cards)
+        self.info = QLabel()
+        self.info.setObjectName("hint")
+        self.info.setWordWrap(True)
+        body.addWidget(self.info)
+        self.which = QLabel("Which screen")
+        self.which.setObjectName("section")
+        body.addWidget(self.which)
+        self.screens_box = QWidget()
+        self.screens_row = QHBoxLayout(self.screens_box)
+        self.screens_row.setContentsMargins(0, 0, 0, 0)
+        self.screens_row.setSpacing(6)
+        self.screen_buttons = QButtonGroup(self)
+        self.screen_buttons.buttonToggled.connect(lambda b, on: on and self._refresh())
+        body.addWidget(self.screens_box)
+        self.sound, self.sound_hint = self._option(body, "speaker", "PC sound on the TV")
+        self.low, self.low_hint = self._option(body, "bolt", "Low delay")
+        self.sound.toggled.connect(self._sound)
+        self.low.toggled.connect(self._low)
+        btns = QHBoxLayout()
+        btns.setContentsMargins(0, 6, 0, 0)
+        btns.setSpacing(8)
+        self.stop = QPushButton("Stop sharing")
+        self.stop.setObjectName("stop")
+        self.close_btn = QPushButton("Cancel")
+        self.start = QPushButton("Start sharing")
+        self.start.setObjectName("start")
+        btns.addWidget(self.stop)
+        btns.addStretch()
+        btns.addWidget(self.close_btn)
+        btns.addWidget(self.start)
+        body.addLayout(btns)
+        lay.addLayout(body)
+        self.stop.clicked.connect(lambda: (self.hide(), self.win.end_screen(stop_tv=True)))
+        self.close_btn.clicked.connect(self.hide)
+        self.start.clicked.connect(self._start)
+
+    def _option(self, body, icon, title):
+        sep = QFrame()
+        sep.setObjectName("sep")
+        sep.setFixedHeight(1)
+        body.addWidget(sep)
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        ic = QLabel()
+        ic.setPixmap(draw_icon(icon, QColor("#8a8a92"), 18).pixmap(18, 18))
+        ic.setFixedWidth(20)
+        texts = QVBoxLayout()
+        texts.setSpacing(0)
+        texts.addWidget(QLabel(title))
+        hint = QLabel()
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        texts.addWidget(hint)
+        switch = ToggleSwitch(title)
+        row.addWidget(ic, 0, Qt.AlignTop)
+        row.addLayout(texts, 1)
+        row.addWidget(switch, 0, Qt.AlignVCenter)
+        body.addLayout(row)
+        return switch, hint
+
+    # ----- opening
+    def open_at(self, button, mode=None):
+        """Open under `button`; mode 'mirror' or 'extend' picks that choice (else: what's on now)."""
+        w = self.win
+        self.loading = True
+        dev = w.current_device()
+        self.tv.setText(f"to {dev.name}" if dev else "No TV chosen yet")
+        s = w.screen
+        # the screens to mirror: every screen but the TV display ('Second display' is that one)
+        tv_rect = w._tv_display_rect()
+        screens = QGuiApplication.screens()
+        self.screen_list = [(i, sc) for i, sc in enumerate(screens) if not (tv_rect and w._screen_rect(sc) == tv_rect)]
+        for b in list(self.screen_buttons.buttons()):
+            self.screen_buttons.removeButton(b)
+            b.deleteLater()
+        current = s["index"] if s is not None and not s.get("tv") else screens.index(QGuiApplication.primaryScreen())
+        for i, sc in self.screen_list:
+            x, y, sw, sh = w._screen_rect(sc)
+            b = QPushButton(f"Screen {i + 1}  ·  {sw} × {sh}")
+            b.setObjectName("screen")
+            b.setCheckable(True)
+            b.setProperty("qt_index", i)
+            b.setToolTip("Your main screen" if sc is QGuiApplication.primaryScreen() else "")
+            self.screen_buttons.addButton(b)
+            self.screens_row.addWidget(b)
+            b.setChecked(i == current)
+        self.screens_row.addStretch()
+        if not self.screen_buttons.checkedButton() and self.screen_buttons.buttons():
+            self.screen_buttons.buttons()[0].setChecked(True)
+        extend = mode == "extend" if mode else bool(s is not None and s.get("tv"))
+        (self.extend if extend else self.mirror).setChecked(True)
+        g = w.state["global"]
+        self.sound.setChecked(bool(g.get("screen_sound", True)))
+        self.low.setChecked(bool(g.get("screen_mirror", True)))
+        self.low.setEnabled(dev is None or dev.kind == "chromecast")
+        try:
+            self.muted = bool((be.speaker_state() or (False,))[0])
+        except Exception:
+            self.muted = False
+        self.loading = False
+        self._refresh()
+        self.adjustSize()
+        pos = button.mapToGlobal(QPoint(button.width() // 2 - self.width() // 2, button.height()))
+        area = (button.screen() or QGuiApplication.primaryScreen()).availableGeometry()
+        pos.setX(max(area.left(), min(pos.x(), area.right() - self.width())))
+        self.move(pos)
+        self.show()
+
+    def _chosen(self):
+        """('extend',) or ('mirror', Qt screen index) as picked in the panel."""
+        if self.extend.isChecked():
+            return ("extend",)
+        b = self.screen_buttons.checkedButton()
+        return ("mirror", int(b.property("qt_index")) if b is not None else 0)
+
+    def _current(self):
+        s = self.win.screen
+        if s is None:
+            return None
+        return ("extend",) if s.get("tv") else ("mirror", s["index"])
+
+    def _refresh(self):
+        if self.loading:
+            return
+        w = self.win
+        extend = self.extend.isChecked()
+        self.which.setVisible(not extend and len(self.screen_list) > 1)
+        self.screens_box.setVisible(not extend and len(self.screen_list) > 1)
+        if extend:
+            first = be.virtual_display() is None
+            self.info.setText("An extra screen appears to the right of yours; what you put there shows on the TV."
+                              + (" The first time, Windows asks to install a display driver for it." if first else ""))
+        self.info.setVisible(extend)
+        if not self.sound.isChecked():
+            self.sound_hint.setText("The TV shows the picture only")
+        elif self.muted:
+            self.sound_hint.setText("This PC is muted - unmute it to hear the sound on the TV")
+        else:
+            self.sound_hint.setText("A low PC volume is fine: the TV gets full strength")
+        self.sound_hint.setStyleSheet("color: #b3261e;" if self.sound.isChecked() and self.muted else "")
+        if not self.low.isEnabled():
+            self.low_hint.setText("An Apple TV shows the screen a few seconds late")
+        elif self.low.isChecked():
+            self.low_hint.setText(f"About {be.MIRROR_DELAY_MS / 1000:.1f} s behind the PC")
+        else:
+            self.low_hint.setText("About 6 s behind - steadier on weak Wi-Fi")
+        current, chosen = self._current(), self._chosen()
+        sharing = current is not None
+        self.stop.setVisible(sharing)
+        self.close_btn.setText("Close" if sharing else "Cancel")
+        if w.current_device() is None:
+            self.start.setText("Choose a TV")
+            self.start.setVisible(True)
+        else:
+            self.start.setText("Switch" if sharing else "Start sharing")
+            self.start.setVisible(not sharing or chosen != current)
+        self.adjustSize()
+
+    # ----- actions
+    def _sound(self, on):
+        if not self.loading:
+            self.win._set_screen_sound(on)  # (casts again with the new choice while sharing)
+            self._refresh()
+
+    def _low(self, on):
+        if not self.loading:
+            self.win._set_screen_mirror(on)
+            self._refresh()
+
+    def _start(self):
+        w = self.win
+        chosen = self._chosen()
+        self.hide()
+        if w.current_device() is None:
+            w.show_devices()
+            return
+        if chosen[0] == "extend":
+            w.cast_tv_display()
+            return
+        if w.tv_display is not None:  # back from the second display to mirroring: switch it off
+            w._tv_display_off()
+        w.cast_screen(chosen[1])
 
 
 # --------------------------------------------------------------------------- settings panel
@@ -1317,6 +1698,7 @@ class MainWindow(QWidget):
         self.devicesChanged.connect(self._devices_changed)
         self.settings_panel = SettingsPanel(self)
         self.device_panel = DevicePanel(self)
+        self.share_panel = SharePanel(self)
         self.splash_path = self._make_splash()
         self._load_playlist_tabs()
         self._restore_geometry()
@@ -1347,14 +1729,29 @@ class MainWindow(QWidget):
         header.setFixedHeight(HEADER_H)
         header.setStyleSheet(f"background: {HEADER_BG};")
         hl = QVBoxLayout(header)
-        hl.setContentsMargins(14, 12, 10, 10)
-        hl.setSpacing(3)
+        hl.setContentsMargins(14, 9, 10, 7)
+        hl.setSpacing(2)
         self.title = QLabel(APP_NAME)
         self.title.setStyleSheet("color: white; font-size: 15px; font-weight: 600;")
         self.time = QLabel("Not Playing")
         self.time.setStyleSheet("color: #b9bac6; font-size: 11px;")
         hl.addWidget(self.title)
-        hl.addWidget(self.time)
+        hrow = QHBoxLayout()  # the time, and the TV chip on the right: the title keeps the whole width
+        hrow.setSpacing(8)
+        hrow.addWidget(self.time, 1)
+        hl.addLayout(hrow)
+        # the TV: its name and whether it's connected; opens the TV list or the TV's panel
+        self.btn_cast = QPushButton()
+        self.btn_cast.setObjectName("tvchip")
+        self.btn_cast.setCursor(Qt.PointingHandCursor)
+        self.btn_cast.setFocusPolicy(Qt.NoFocus)
+        self.btn_cast.setIconSize(QSize(14, 14))
+        self.btn_cast.setStyleSheet("QPushButton#tvchip { color: white; background: rgba(255,255,255,18);"
+                                    " border: 1px solid rgba(255,255,255,70); border-radius: 11px;"
+                                    " padding: 2px 10px 2px 7px; font-size: 11px; min-height: 18px; }"
+                                    "QPushButton#tvchip:hover { background: rgba(255,255,255,45); }")
+        hrow.addWidget(self.btn_cast, 0, Qt.AlignVCenter)
+        self.tv_chip_state = None
         self.header = header
         leftcol.addWidget(header)
 
@@ -1369,14 +1766,12 @@ class MainWindow(QWidget):
         self.btn_stop = tool_button("stop", "Stop")
         self.btn_next = tool_button("next", "Next video")
         self.btn_gear = tool_button("gear", "Settings for this video")
-        self.btn_screen = tool_button("screen", "Cast this PC's screen to the TV")
-        self.btn_cast = tool_button("cast", "Choose the TV")
+        self.btn_screen = tool_button("screen", "Show your screen on the TV: mirror it, or use the TV as a second display")
         for b in (self.btn_list, self.btn_back, self.btn_play, self.btn_stop, self.btn_next):
             bl.addWidget(b)
         bl.addStretch()
         bl.addWidget(self.btn_screen)
         bl.addWidget(self.btn_gear)
-        bl.addWidget(self.btn_cast)
         leftcol.addWidget(bar)
         tl.addLayout(leftcol, 1)
         self.thumb = Thumb(self)
@@ -1418,6 +1813,47 @@ class MainWindow(QWidget):
         ib.addWidget(self.intro_watch)
         self.intro_bar.hide()
         root.addWidget(self.intro_bar)
+        # "Live" bar: while this PC's screen is on the TV - what's shown where, and Stop
+        self.live_bar = QFrame()
+        self.live_bar.setObjectName("livebar")
+        self.live_bar.setStyleSheet("QFrame#livebar { background: #b3261e; }"
+                                    "QLabel { color: white; background: transparent; }"
+                                    "QPushButton { color: white; border: 1px solid rgba(255,255,255,170);"
+                                    " padding: 3px 12px; font-size: 11px; font-weight: bold; background: transparent; }"
+                                    "QPushButton:hover { background: rgba(255,255,255,45); }"
+                                    "QToolButton { border: none; background: transparent; }"
+                                    "QToolButton:hover { background: rgba(255,255,255,45); }")
+        lb = QHBoxLayout(self.live_bar)
+        lb.setContentsMargins(12, 6, 8, 6)
+        lb.setSpacing(9)
+        self.live_tag = QLabel("LIVE")
+        self.live_tag.setStyleSheet("background: white; color: #b3261e; font-size: 9px; font-weight: bold;"
+                                    " padding: 1px 5px; border-radius: 3px;")
+        texts = QVBoxLayout()
+        texts.setSpacing(0)
+        self.live_title = QLabel()
+        self.live_title.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self.live_sub = QLabel()
+        self.live_sub.setStyleSheet("font-size: 11px; color: #ffdcd8;")
+        texts.addWidget(self.live_title)
+        texts.addWidget(self.live_sub)
+        self.live_sound = QToolButton()
+        self.live_sound.setIconSize(QSize(18, 18))
+        self.live_sound.setFixedSize(28, 26)
+        self.live_sound.setCursor(Qt.PointingHandCursor)
+        self.live_sound.setFocusPolicy(Qt.NoFocus)
+        self.live_stop = QPushButton("Stop sharing")
+        self.live_stop.setCursor(Qt.PointingHandCursor)
+        self.live_stop.setFocusPolicy(Qt.NoFocus)
+        lb.addWidget(self.live_tag, 0, Qt.AlignVCenter)
+        lb.addLayout(texts, 1)
+        lb.addWidget(self.live_sound)
+        lb.addWidget(self.live_stop)
+        self.live_bar.hide()
+        root.addWidget(self.live_bar)
+        self.live_stop.clicked.connect(lambda: self.end_screen(stop_tv=True))
+        self.live_sound.clicked.connect(
+            lambda: self._set_screen_sound(not self.state["global"].get("screen_sound", True)))
 
         self.list_area = QWidget()
         self.list_area.setStyleSheet(f"background: {LIST_BG};")
@@ -1450,6 +1886,9 @@ class MainWindow(QWidget):
         self.list = PlaylistView()
         self.list.setItemDelegate(PlaylistDelegate(self))
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.empty = EmptyState(self.list, self)
+        for sig in (self.list.model().rowsInserted, self.list.model().rowsRemoved, self.list.model().modelReset):
+            sig.connect(lambda *a: self._update_empty())
         la.addWidget(self.list, 1)
         grip_row = QHBoxLayout()
         grip_row.setContentsMargins(0, 0, 0, 0)
@@ -1707,6 +2146,15 @@ class MainWindow(QWidget):
             self._load_playlist_tabs()
         self.save()
 
+    def _update_empty(self):
+        """The 'What would you like on the TV?' cards: only while the playlist is empty."""
+        try:
+            e = self.list.empty
+            e.setGeometry(self.list.viewport().rect())
+            e.setVisible(self.list.count() == 0)
+        except RuntimeError:  # the window is being closed and its playlist taken down
+            pass
+
     def _fill_list(self, select=None):
         self.list.clear()
         for p in self.playlist:
@@ -1718,6 +2166,7 @@ class MainWindow(QWidget):
         for row in select or []:
             if 0 <= row < self.list.count():
                 self.list.item(row).setSelected(True)
+        self._update_empty()
         self._refresh_next()
 
     def _refresh_next(self):
@@ -2030,7 +2479,6 @@ class MainWindow(QWidget):
     def _connected(self, player, then):
         self.connecting = False
         self.conn = player
-        self.btn_cast.setToolTip(f"Connected to {player.device.name}")
         self.flash(f"Connected to {player.device.name}")
         self._update_header()
         if then:
@@ -2050,55 +2498,14 @@ class MainWindow(QWidget):
         if self.player is not None:
             self.stop(picture=False)
         self.conn = None
-        self.btn_cast.setToolTip("Choose the TV")
         worker(self._safe, conn.disconnect)
         self.flash(f"Disconnected from {conn.device.name}")
         self._update_header()
 
     # ----- casting the PC screen
     def screen_menu(self):
-        """The screen button's menu: which screen to cast, with or without the PC's sound, stop."""
-        self.build_screen_menu().exec(self.btn_screen.mapToGlobal(QPoint(0, self.btn_screen.height())))
-
-    def build_screen_menu(self):
-        m = QMenu(self)
-        tv = self.current_device()
-        head = m.addAction(f"Cast this PC's screen to {tv.name}" if tv else "Cast this PC's screen (choose a TV first)")
-        head.setEnabled(False)
-        screens = QGuiApplication.screens()
-        tv_rect = self._tv_display_rect()
-        for i, sc in enumerate(screens):
-            g, r = sc.geometry(), sc.devicePixelRatio()
-            name = ("Cast the TV display" if tv_rect and self._screen_rect(sc) == tv_rect else
-                    "Cast my screen" if len(screens) == 1 else f"Cast screen {i + 1}")
-            act = m.addAction(f"{name}  ({round(g.width() * r)} x {round(g.height() * r)})",
-                              lambda i=i: self.cast_screen(i))
-            act.setCheckable(True)
-            act.setChecked(self.screen is not None and self.screen["index"] == i)
-        second = m.addAction("Use the TV as a second display")
-        second.setToolTip("An extra screen to the right of this one, shown on the TV: drag windows there to put them "
-                          "on the TV.\nThe first time, Video Caster installs the free Virtual Display Driver for it "
-                          "(Windows asks for permission).")
-        second.setCheckable(True)
-        second.setChecked(self.screen is not None and self.tv_display is not None)
-        second.triggered.connect(lambda on: self.cast_tv_display() if on else self.end_screen(stop_tv=True))
-        m.addSeparator()
-        snd = m.addAction("With the PC's sound")
-        snd.setCheckable(True)
-        snd.setChecked(bool(self.state["global"].get("screen_sound", True)))
-        snd.toggled.connect(self._set_screen_sound)
-        low = m.addAction("Low delay (mirroring)")
-        low.setToolTip("Google's own screen mirroring, as Chrome's 'Cast screen' uses: the TV is a fraction of a "
-                       "second behind.\nOff: the screen as a video stream, a few seconds behind (for TVs that "
-                       "don't take mirroring).")
-        low.setCheckable(True)
-        low.setChecked(bool(self.state["global"].get("screen_mirror", True)))
-        low.setEnabled(tv is None or tv.kind == "chromecast")
-        low.toggled.connect(self._set_screen_mirror)
-        if self.screen is not None:
-            m.addSeparator()
-            m.addAction("Stop casting the screen", lambda: self.end_screen(stop_tv=True))
-        return m
+        """The screen button: the share panel (mirror or second display, screen, sound, delay)."""
+        self.share_panel.open_at(self.btn_screen)
 
     def _set_screen_sound(self, on):
         self.state["global"]["screen_sound"] = bool(on)
@@ -2239,9 +2646,10 @@ class MainWindow(QWidget):
             self.connect_device(dev, then=lambda: self.cast_screen(index))
             return
         sound = bool(self.state["global"].get("screen_sound", True))
-        if sound and (be.speaker_state() or (False,))[0]:
-            QMessageBox.information(self, APP_NAME, "This PC is muted, so there's no sound to send to the TV.\n\n"
-                                    "Unmute it - a low volume is fine: the TV still gets the sound at full strength.")
+        try:  # a muted PC has no sound to send: the share panel warns before, the live bar while sharing
+            muted = sound and bool((be.speaker_state() or (False,))[0])
+        except Exception:
+            muted = False
         # whatever played on the TV makes way (the new load replaces it there)
         if self.player is not None:
             self._save_resume()
@@ -2258,9 +2666,11 @@ class MainWindow(QWidget):
         player = self.conn
         was_tv = bool(self.screen is not None and self.screen.get("tv") and self.screen["index"] == index)
         s = self.screen = {"index": index, "sound": sound, "player": player, "since": time.time(), "playing": False,
-                           "mirror": None, "tv": was_tv}
+                           "mirror": None, "tv": was_tv, "muted": muted}
         be.log(f"casting screen {index + 1} to {dev.name} {'with' if sound else 'without'} sound")
         screens = QGuiApplication.screens()
+        tv_rect = self._tv_display_rect()  # (the TV display isn't a screen of yours to mirror)
+        s["single"] = sum(1 for sc in screens if not (tv_rect and self._screen_rect(sc) == tv_rect)) <= 1
         src = None
         name = screens[index].name() if index < len(screens) else None  # \\.\DISPLAYn, or the monitor's name
         rect = None
@@ -3183,20 +3593,49 @@ class MainWindow(QWidget):
         self.message_until = time.time() + secs
         self.time.setText(text)
 
+    def _update_tv_chip(self):
+        """The TV chip in the header: which TV, and whether it's connected."""
+        dev = self.current_device()
+        connected = dev is not None and self.conn is not None and self.conn.device is dev
+        if dev is None:
+            state = ("none",)
+        else:
+            state = ("on" if connected else "connecting" if self.connecting else "ready" if dev.online else "off",
+                     dev.name)
+        if state == self.tv_chip_state:
+            return
+        self.tv_chip_state = state
+        if dev is None:
+            self.btn_cast.setIcon(draw_icon("cast", QColor("white"), 14))
+            self.btn_cast.setText("Choose a TV")
+            self.btn_cast.setToolTip("Choose the TV for your videos and your screen")
+        else:
+            kind = state[0]
+            self.btn_cast.setIcon(dot_icon({"on": "#4cd964", "connecting": "#f5c242", "ready": "#c9c9d1",
+                                            "off": "#9a9aa6"}[kind], hollow=kind == "off"))
+            self.btn_cast.setText(QFontMetrics(self.btn_cast.font()).elidedText(dev.name, Qt.ElideRight, 130))
+            self.btn_cast.setToolTip({"on": f"Connected to {dev.name}: volume, disconnect, speed test",
+                                      "connecting": f"Connecting to {dev.name}...",
+                                      "ready": f"{dev.name}: connects when you play something or share your "
+                                               "screen. Click to choose another TV.",
+                                      "off": f"{dev.name} isn't available right now. Click to choose a TV."}[kind])
+
     def _update_header(self, status=None):
+        self._update_tv_chip()
         if self.screen is not None:
             s = self.screen
-            self.title.setText("TV display" if s.get("tv") else "Your screen" if len(QGuiApplication.screens()) == 1
-                               else f"Screen {s['index'] + 1}")
+            self.title.setText("TV display" if s.get("tv") else "Your screen"
+                               if s.get("single", len(QGuiApplication.screens()) == 1) else f"Screen {s['index'] + 1}")
             if status:
                 self.time.setText(status)
             elif time.time() >= self.message_until:
                 self.time.setText(f"{'Mirroring' if s.get('mirror') else 'Casting'} to {s['player'].device.name}"
-                                  + (" with sound" if s["sound"] else " without sound")
                                   + ("" if s["playing"] else " - starting..."))
             self.seek.duration = 0
             self.seek.set_fraction(0)
+            self._update_live(s)
             return
+        self.live_bar.hide()
         path = self.now_path or self.selected_path()
         name = Path(path).name if path else APP_NAME
         fm = QFontMetrics(self.title.font())
@@ -3217,6 +3656,29 @@ class MainWindow(QWidget):
             self.time.setText("Not Playing")
         self.seek.duration = self.duration if self.player is not None else 0
         self.seek.set_fraction(self.position / self.duration if (self.player is not None and self.duration) else 0)
+
+    def _update_live(self, s):
+        """The live bar while the screen is shared: what's on which TV, how far behind, sound."""
+        tv = s["player"].device.name
+        single = s.get("single", len(QGuiApplication.screens()) == 1)
+        if s.get("tv"):
+            title = f"{tv} is your second display"
+        else:
+            title = f"Your screen is on {tv}" if single else f"Screen {s['index'] + 1} is on {tv}"
+        if not s["playing"]:
+            delay = "Starting..."
+        elif s.get("mirror"):
+            delay = f"About {be.MIRROR_DELAY_MS / 1000:.1f} s behind"
+        else:
+            delay = "About 6 s behind"
+        sound = ("PC sound on - but this PC is muted" if s.get("muted") else "PC sound on") if s["sound"] else "No sound"
+        self.live_title.setText(title)
+        self.live_title.setToolTip("Move the mouse past the right edge of your screen to reach it; drag windows there"
+                                   if s.get("tv") else "Everything on this screen shows on the TV")
+        self.live_sub.setText(f"{delay} · {sound}")
+        self.live_sound.setIcon(draw_icon("speaker" if s["sound"] else "speaker-off", QColor("white"), 18))
+        self.live_sound.setToolTip("Stop sending the PC's sound" if s["sound"] else "Send the PC's sound too")
+        self.live_bar.show()
 
     def _update_buttons(self):
         """Grey out what can't be used now, like Airflow: back, stop and next only while a

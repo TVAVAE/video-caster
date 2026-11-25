@@ -18,22 +18,25 @@ one. You can still skip and rewind with the app or with the TV remote. Or put yo
 screen on the TV, with its sound.
 
 <p align="center">
-  <img src="docs/window.png" alt="Video Caster's window: a series episode playing, with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
+  <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.0
+## What's new in 0.3.1
 
-- **Use the TV as a second display**: an extra screen to the right of yours, shown on the TV.
-  Drag windows onto it and keep working on your own screen. Video Caster brings everything it
-  needs - see [The TV as a second display](#the-tv-as-a-second-display).
-- **The right screen is cast** on PCs with several displays, also when Windows lists them in
-  another order.
-- Stopping a mirrored screen without the app's picture coming back now also closes the
-  mirroring on the TV.
+A cleaner window that says what it does:
 
-0.2.1 brought low-delay screen mirroring on Chromecast and Google TV, a smooth screen stream on
-Google TV and reliable starts of 4K films; 0.2.0 added *Cast your screen* and the logo. Earlier
-versions and downloads: [releases](https://github.com/TVAVAE/video-caster/releases).
+- **Show your screen on the TV**: the screen button opens one panel - *Mirror my screen* or
+  *Second display*, which screen, PC sound and low delay, each with a line on what to expect.
+  See [Cast your screen](#cast-your-screen).
+- **A live bar** while your screen is on the TV: what's shown where, how far behind, the sound,
+  and *Stop sharing*.
+- **The TV in the header**: its name, with a dot that shows whether it's connected.
+- **An empty playlist shows what you can do**: play videos, mirror your screen, or use the TV
+  as a second display.
+
+0.3.0 added *Use the TV as a second display*; 0.2.1 low-delay screen mirroring on Chromecast and
+Google TV; 0.2.0 *Cast your screen* and the logo. Earlier versions and downloads:
+[releases](https://github.com/TVAVAE/video-caster/releases).
 
 ## Features
 
@@ -160,10 +163,17 @@ networks** - the TV fetches the video from a small web server in the app.
 
 ## How to use
 
-1. Click the **TV button** (top right) and pick your TV. It shows a picture to confirm it's
-   connected; the TV menu also has volume, mute, *Disconnect* and *Speed Test*.
+1. Click **Choose a TV** in the header and pick your TV. From then on the header shows the
+   TV's name, with a green dot while it's connected (the TV shows a picture to confirm it).
+   Click it for volume, mute, *Disconnect* and *Speed Test*, or to pick another TV.
 2. **Drag videos or folders** onto the window, or right-click the playlist: *Add videos...*,
-   *Add a folder...*. Make more playlists with *New Playlist*.
+   *Add a folder...*. Make more playlists with *New Playlist*. An empty playlist shows what
+   you can put on the TV:
+
+<p align="center">
+  <img src="docs/home.png" alt="An empty playlist: What would you like on the TV? Play videos, Mirror my screen, Second display" width="490">
+</p>
+
 3. **Double-click** a video to play it. Use the buttons, the seek bar - or your TV remote.
 4. The **gear button** opens the settings for the selected video:
 
@@ -186,27 +196,33 @@ The settings are kept per PC: they apply to whichever TV you cast to.
 
 ### Cast your screen
 
-To show your **whole PC screen** on the TV, click the **screen button** (the screen with an
-arrow, next to the gear) and choose *Cast my screen* - or one of your screens if you have more.
-If no TV is chosen yet, the app asks for one first.
+Click the **screen button** (the screen with an arrow, next to the gear). Its panel has two
+choices: **Mirror my screen** - the TV shows what you see - or **Second display** (see
+[below](#the-tv-as-a-second-display)). With more than one screen, pick which one to mirror.
+Then *Start sharing*.
 
 <p align="center">
-  <img src="docs/screen-menu.png" alt="The screen button's menu: Cast this PC's screen to Living Room TV, Cast my screen (1920 x 1200), Use the TV as a second display, With the PC's sound, Low delay (mirroring)" width="256">
+  <img src="docs/share-panel.png" alt="The share panel: Show your screen on the TV, to Living Room TV; Mirror my screen or Second display; PC sound on the TV and Low delay switches; Cancel and Start sharing" width="392">
 </p>
 
-- The window shows *Your screen - Mirroring to ... with sound* (or *Casting to ...*, see below);
-  only *Stop* is used meanwhile. *Stop*, stopping with the TV remote, or playing a video ends it.
-- **Low delay (mirroring)** (on by default): on a Chromecast, Google TV or TV with Chromecast
-  built-in, the app uses Google's own screen mirroring - the protocol Chrome's *Cast screen*
-  uses. The TV plays the screen about 0.2 seconds after it happens on the PC, so the mouse
-  pointer and videos from the browser follow along.
-- Without it - on an Apple TV, with *Low delay* off, or on a TV that doesn't accept mirroring
-  (the app then switches over by itself) - the screen goes as a video stream, which the TV
-  plays about 6 seconds late: fine for a website, photos or a presentation.
-- *With the PC's sound* (in the same menu) switches the sound on or off; changing either option
-  while casting starts again with the new choice.
-- The sound is recorded as Windows plays it, so the PC must **not be muted** - the app warns you
-  if it is. A low volume is fine: the TV still gets the sound at full strength.
+- **PC sound on the TV**: the sound is recorded as Windows plays it, so the PC must **not be
+  muted** - the panel says so if it is. A low volume is fine: the TV still gets the sound at
+  full strength.
+- **Low delay** (on by default): on a Chromecast, Google TV or TV with Chromecast built-in, the
+  app uses Google's own screen mirroring - the protocol Chrome's *Cast screen* uses. The TV
+  shows the screen about 0.2 seconds after the PC, so the mouse pointer and videos from the
+  browser follow along. Without it - on an Apple TV, with *Low delay* off, or on a TV that
+  doesn't accept mirroring (the app then switches over by itself) - the screen goes as a video
+  stream, about 6 seconds late: fine for a website, photos or a presentation.
+- While your screen is on the TV, a red bar says so - what's shown where, how far behind, and
+  the sound - with a sound button and **Stop sharing**:
+
+<p align="center">
+  <img src="docs/live-bar.png" alt="The live bar: LIVE, Your screen is on Living Room TV, About 0.2 s behind, PC sound on, a sound button and Stop sharing" width="490">
+</p>
+
+- *Stop sharing*, *Stop*, stopping with the TV remote, or playing a video ends it. Changing an
+  option in the panel while sharing starts again with the new choice.
 - No extra software is needed: the screen is captured with Windows' Desktop Duplication (via
   FFmpeg, encoded on the graphics chip when the PC has one) and the sound with Windows' own
   audio loopback. Your screen goes only to the TV you picked, and only while casting; mirroring
@@ -214,7 +230,7 @@ If no TV is chosen yet, the app asks for one first.
 
 ### The TV as a second display
 
-Choose **Use the TV as a second display** in the screen button's menu to get an extra screen
+Choose **Second display** in the screen button's panel to get an extra screen
 to the right of yours that shows on the TV: move the mouse past the right edge of your screen,
 drag windows there (or press Win+Shift+→), and keep working on your own screen. It's 1920 x 1080
 and, on a Chromecast or Google TV, a fraction of a second behind.
@@ -309,11 +325,11 @@ instead of `app/`.
   *Disconnect* and connect again.
 - **No sound with Passthrough** - your TV or soundbar doesn't take Dolby; choose *Stereo Downmix*.
 - **No sound when casting the screen** - unmute the PC (a low volume is enough), and check that
-  *With the PC's sound* is ticked in the screen button's menu.
-- **The screen on the TV is seconds behind** - check that *Low delay (mirroring)* is ticked in
-  the screen button's menu (Chromecast and Google TV only). If the window says *Casting to*
-  rather than *Mirroring to*, the TV didn't accept mirroring; the log says why.
-- **Mirroring stutters or freezes** - untick *Low delay (mirroring)*: the video stream is
+  *PC sound on the TV* is on in the screen button's panel.
+- **The screen on the TV is seconds behind** - check that *Low delay* is on in the screen
+  button's panel (Chromecast and Google TV only). If the live bar says *About 6 s behind*, the
+  TV didn't accept mirroring; the log says why.
+- **Mirroring stutters or freezes** - switch *Low delay* off: the video stream is
   further behind but copes better with weak Wi-Fi.
 - **Windows or the mouse vanish to the right** - an extra screen is still on (e.g. a virtual
   display you set up yourself). Press Win+P and choose *PC screen only*, or Win+Shift+← to bring
@@ -387,7 +403,7 @@ containing `bin` and `LICENSE`, and at Inno Setup's `ISCC.exe` (winget installs 
 
 This builds the app and **`dist\VideoCaster-Setup.exe`**. Use `-SkipAppBuild` to package
 an already built `dist\VideoCaster.exe`, `-DisplayDriverZip <path>` as above, or
-`-Version "0.3.1"` to set the installer version (the default is the current release, 0.3.0). The exe, installer and shortcut icons
+`-Version "0.3.2"` to set the installer version (the default is the current release, 0.3.1). The exe, installer and shortcut icons
 come from `app/assets/videocaster.ico`. `installer/VideoCaster.iss` defines installation, shortcuts, optional private
 network firewall rules, and uninstall. FFmpeg's license and build information are
 installed with it. Downloaded tools and staged payloads are not committed to Git.

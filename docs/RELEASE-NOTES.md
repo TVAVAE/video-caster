@@ -1,4 +1,4 @@
-Video Caster 0.3.0 for Windows.
+Video Caster 0.3.1 for Windows.
 
 ## Downloads
 
@@ -10,10 +10,13 @@ Windows 10 or 11, 64-bit. Keep the PC and TV on the same network. The binaries a
 
 ## What's new
 
-- **Use the TV as a second display**: a new option in the screen button's menu adds an extra screen to the right of yours and shows it on the TV. Drag a window onto it to put it on the TV, and keep working on your own screen. The extra screen is there only while it's cast: when you stop, its windows come back to your screen. Windows needs a virtual display for this. Video Caster includes the free, open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT license) and installs it the first time you use the option, after asking you; Windows then asks for admin permission, just once.
-- **The right screen is cast** on PCs with more than one display, also when Windows lists the displays in a different order than Video Caster does.
-- **Fix**: stopping a mirrored screen without the app's picture coming back now also closes the mirroring on the TV.
+A cleaner window that says what it does:
 
-Screen mirroring has now been used on a Chromecast with Google TV and on a Philips Android TV with Chromecast built-in: every picture played on time, also in a 12-minute session. The second display was checked on the PC: switching it on and off, casting it, and installing the driver through the app. It was also cast to the Philips TV, using the same virtual display set up by hand. Playback on a physical Apple TV is still untested.
+- **Show your screen on the TV**: the screen button now opens one panel instead of a list of menu items. It offers two choices, *Mirror my screen* (the TV shows what you see) or *Second display* (drag windows onto the TV). Below them are the screen to mirror (only when you have more than one), *PC sound on the TV* and *Low delay*, each with a line on what to expect, then *Start sharing*. While sharing, the same panel offers *Stop sharing* and switching to the other choice.
+- **A live bar** while your screen is on the TV, so it's never on there by accident. It says what's shown where (for example "Your screen is on Living Room TV"), how far behind it is, and whether the sound is on, or that the PC is muted. It has a sound button and *Stop sharing*. The "PC is muted" pop-up is gone; the panel and the bar say it instead.
+- **The TV in the header**: the TV button became the TV's name with a status dot (green when connected, yellow while connecting, grey when not connected yet), or *Choose a TV* when none is chosen. Click it for the TV's volume, *Disconnect* and *Speed Test*, or to pick another TV.
+- **An empty playlist shows what you can do**: *Play videos*, *Mirror my screen* or *Second display*. Click one to start; dropping videos still works anywhere in the playlist.
 
-The installer contains the Gyan FFmpeg 9.1 full build. Its GPLv3 license, build configuration, and upstream source reference are included under `ffmpeg` in the installation directory. See the [FFmpeg build provider](https://www.gyan.dev/ffmpeg/builds/) and [corresponding FFmpeg source commit](https://github.com/FFmpeg/FFmpeg/commit/74e4393595). The Virtual Display Driver's license is installed as `licenses\VirtualDisplayDriver-LICENSE.txt`.
+The new panel, bar, header and playlist screen were checked on the PC with a stand-in TV. Screen mirroring itself is unchanged since 0.3.0, where it was used on a Chromecast with Google TV and a Philips Android TV. Playback on a physical Apple TV is still untested.
+
+The installer contains the Gyan FFmpeg 9.1 full build. Its GPLv3 license, build configuration, and upstream source reference are included under `ffmpeg` in the installation directory. See the [FFmpeg build provider](https://www.gyan.dev/ffmpeg/builds/) and [corresponding FFmpeg source commit](https://github.com/FFmpeg/FFmpeg/commit/74e4393595). The Virtual Display Driver's license (MIT) is installed as `licenses\VirtualDisplayDriver-LICENSE.txt`.

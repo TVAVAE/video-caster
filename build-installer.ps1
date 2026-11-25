@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$FFmpegDirectory,
     [string]$ISCC = "ISCC.exe",
-    [string]$Version = "0.3.0",
+    [string]$Version = "0.3.1",
     [string]$Python = "python",
     [string]$DisplayDriverZip = "",
     [switch]$SkipAppBuild
