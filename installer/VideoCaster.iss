@@ -64,6 +64,8 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""V
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Video Caster - Private UDP"" dir=in action=allow program=""{app}\VideoCaster.exe"" enable=yes profile=private remoteip=localsubnet protocol=UDP"; Flags: runhidden; Tasks: privatefirewall; Check: IsAdminInstallMode
 Filename: "{app}\VideoCaster.exe"; Parameters: "--install-display-driver ""{tmp}\virtual-display.json"""; StatusMsg: "Installing the virtual display..."; Flags: runhidden waituntilterminated; Tasks: virtualdisplay; Check: IsAdminInstallMode
 Filename: "{app}\VideoCaster.exe"; Description: "Launch Video Caster"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; an update from inside the app (/SILENT /RESTARTAPP=1): start Video Caster again when it's done
+Filename: "{app}\VideoCaster.exe"; Flags: nowait runasoriginaluser; Check: RestartRequested
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Video Caster - Private TCP"" program=""{app}\VideoCaster.exe"""; Flags: runhidden; Check: IsAdminInstallMode; RunOnceId: RemovePrivateTCP
@@ -72,3 +74,9 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 Filename: "{app}\VideoCaster.exe"; Parameters: "--uninstall-display-driver -"; Flags: runhidden waituntilterminated; Check: IsAdminInstallMode; RunOnceId: RemoveVirtualDisplay
 
 ; User playlists and watch progress live outside {app}; uninstall preserves them.
+
+[Code]
+function RestartRequested: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:restartapp|0}') = '1');
+end;

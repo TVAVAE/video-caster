@@ -1,13 +1,21 @@
 param(
     [Parameter(Mandatory = $true)][string]$FFmpegDirectory,
     [string]$ISCC = "ISCC.exe",
-    [string]$Version = "0.3.2",
+    [string]$Version = "",  # default: APP_VERSION in app\backend.py (the app shows and checks that one)
     [string]$Python = "python",
     [string]$DisplayDriverZip = "",
     [switch]$SkipAppBuild
 )
 
 $ErrorActionPreference = "Stop"
+# One version for the app and its installer: the app compares it with the newest release
+$appVersion = [regex]::Match((Get-Content -Raw (Join-Path $PSScriptRoot 'app\backend.py')),
+    'APP_VERSION\s*=\s*"([^"]+)"').Groups[1].Value
+if (-not $appVersion) { throw 'APP_VERSION not found in app\backend.py.' }
+if (-not $Version) { $Version = $appVersion }
+elseif ($Version -ne $appVersion) {
+    throw "-Version $Version differs from APP_VERSION $appVersion in app\backend.py; change it there instead."
+}
 if ($env:VIDEOCASTER_BUILD_CONSOLE -eq '1') {
     throw 'Remove VIDEOCASTER_BUILD_CONSOLE before building the release installer.'
 }

@@ -21,27 +21,17 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.2
+## What's new in 0.3.3
 
-- **The virtual display in Setup**: tick *Install the virtual display* to get *Second display*
-  ready with the app (when installing for all users). Uninstalling removes it again - only if
-  Video Caster installed it.
-- The [third-party components](#third-party-components) are listed, with their projects and
-  licenses.
+- **Updates install themselves**: when a new version is out, a bar in the window offers it -
+  *Update now* downloads it, checks it and installs it over this one, then starts Video Caster
+  again. See [Windows installer](#windows-installer). The daily check can be switched off.
+- **The back-10-seconds button** now shows an arrow turning back (anticlockwise).
+- The settings show the version (*About Video Caster*) with *Check for updates*.
 
-### 0.3.1: a cleaner window that says what it does
-
-- **Show your screen on the TV**: the screen button opens one panel - *Mirror my screen* or
-  *Second display*, which screen, PC sound and low delay, each with a line on what to expect.
-  See [Cast your screen](#cast-your-screen).
-- **A live bar** while your screen is on the TV: what's shown where, how far behind, the sound,
-  and *Stop sharing*.
-- **The TV in the header**: its name, with a dot that shows whether it's connected.
-- **An empty playlist shows what you can do**: play videos, mirror your screen, or use the TV
-  as a second display.
-
-0.3.0 added *Use the TV as a second display*; 0.2.1 low-delay screen mirroring on Chromecast and
-Google TV; 0.2.0 *Cast your screen* and the logo. Earlier versions and downloads:
+Earlier: 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
+bar, the TV in the header and the empty-playlist cards; 0.3.0 *Use the TV as a second display*;
+0.2.1 low-delay screen mirroring; 0.2.0 *Cast your screen*. All versions and downloads:
 [releases](https://github.com/TVAVAE/video-caster/releases).
 
 ## Features
@@ -92,6 +82,10 @@ Google TV; 0.2.0 *Cast your screen* and the logo. Earlier versions and downloads
 - **The TV as a second display**: an extra screen next to yours that shows on the TV - drag
   windows there and keep working on your own screen.
 
+**Updates**
+- Tells you when a new version is out, and installs it with one click (see
+  [Windows installer](#windows-installer)). Can be switched off in the settings.
+
 **TVs**
 - Chromecast, Google TV and TVs with Chromecast built-in - found automatically on your network.
 - Apple TV / AirPlay: play, pause, seek and volume. Soft subtitles aren't available there (use
@@ -127,6 +121,12 @@ Make sure your trusted home network is set to **Private** in Windows.
 Upgrading or uninstalling preserves playlists, settings and watch progress in
 `%LOCALAPPDATA%\Video Caster\`. The installer is unsigned, so Windows may ask you
 to confirm running it.
+
+**Updates install themselves** (from 0.3.3 on): when a new version is out, a bar in the window
+says so. *Update now* downloads the new Setup from GitHub, checks it against the release's
+checksums, installs it over the old version - Windows asks for permission - and starts Video
+Caster again. *Later* hides it for three days. The portable executable gets a *Download* link
+to the release page instead.
 
 ### Windows executable
 
@@ -303,6 +303,10 @@ online subtitle search, the video's file name, size and fingerprint (OpenSubtitl
 are sent to Stremio's subtitle service (`strem.io`) - and to OpenSubtitles.com if you added
 your own API key.
 
+Once a day the app asks GitHub (`api.github.com`) for the newest Video Caster release - only
+that question, nothing about you or your videos. Switch it off with *Updates* in the settings;
+*About Video Caster* (also in the settings) checks right away.
+
 ## Third-party components
 
 Two components are shipped with Video Caster but kept in their own projects; the build takes
@@ -423,8 +427,9 @@ containing `bin` and `LICENSE`, and at Inno Setup's `ISCC.exe` (winget installs 
 ```
 
 This builds the app and **`dist\VideoCaster-Setup.exe`**. Use `-SkipAppBuild` to package
-an already built `dist\VideoCaster.exe`, `-DisplayDriverZip <path>` as above, or
-`-Version "0.3.3"` to set the installer version (the default is the current release, 0.3.2). The exe, installer and shortcut icons
+an already built `dist\VideoCaster.exe`, or `-DisplayDriverZip <path>` as above. The version
+comes from `APP_VERSION` in `app/backend.py` - the one place to change it, since the app
+compares it with the newest release to offer updates (`-Version` must match it). The exe, installer and shortcut icons
 come from `app/assets/videocaster.ico`. `installer/VideoCaster.iss` defines installation, shortcuts, optional private
 network firewall rules, and uninstall. FFmpeg's license and build information are
 installed with it. Downloaded tools and staged payloads are not committed to Git.

@@ -20,8 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import backend as be  # noqa: E402
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal  # noqa: E402
-from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QIcon, QImage, QKeySequence,  # noqa: E402
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal  # noqa: E402
+from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QKeySequence,  # noqa: E402
                            QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QShortcut,
                            QGuiApplication)
 from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QButtonGroup,  # noqa: E402
@@ -76,14 +76,15 @@ def _icon_pixmap(name, color, size=28):
         for y in (8, 14, 20):
             p.fillRect(QRectF(3, y - 1.5, 3, 3), c)
             p.drawLine(QPointF(9, y), QPointF(25, y))
-    elif name == "rewind":
+    elif name == "rewind":  # back 10 s: an anticlockwise circle arrow (like the undo/replay sign)
         path = QPainterPath()
-        path.arcMoveTo(QRectF(4, 4, 20, 20), 110)
-        path.arcTo(QRectF(4, 4, 20, 20), 110, 300)
+        path.arcMoveTo(QRectF(4, 4, 20, 20), 90)
+        path.arcTo(QRectF(4, 4, 20, 20), 90, -300)  # from the top, round the right and the bottom, up the left
         p.drawPath(path)
+        # the head at the top, pointing left into the gap: the arrow turns anticlockwise
         p.setBrush(c)
         p.setPen(Qt.NoPen)
-        p.drawPolygon(QPolygonF([QPointF(4.5, 6), QPointF(11.5, 5.2), QPointF(7.5, 11)]))
+        p.drawPolygon(QPolygonF([QPointF(9.6, 4), QPointF(15.4, 0.6), QPointF(15.4, 7.4)]))
         f = QFont("Segoe UI", 7)
         f.setBold(True)
         p.setFont(f)
@@ -1257,7 +1258,15 @@ class SettingsPanel(QFrame):
         right.addWidget(HelpButton("A series' opening titles are found by comparing the sound of two episodes in "
                                    "the same folder. When they start, a 5-second countdown skips them. Watch them "
                                    "anyway: click 'Watch intro' in the window, or pause with the TV remote."), 12, 2)
-        right.setRowStretch(13, 1)
+        right.addWidget(hline(), 13, 0, 1, 3)
+        self.updates = QCheckBox("Check for new versions")
+        self.updates.toggled.connect(lambda v: self._changed("check_updates", v, "global"))
+        right.addWidget(label("Updates"), 14, 0)
+        right.addWidget(self.updates, 14, 1)
+        right.addWidget(HelpButton("Once a day Video Caster asks GitHub whether there's a newer version - only that "
+                                   "question, nothing about you or your videos. When there is one, a bar in the "
+                                   "window offers to install it. 'About Video Caster' checks right away."), 14, 2)
+        right.setRowStretch(15, 1)
         btns = QHBoxLayout()
         about = QPushButton(f"About {APP_NAME}")
         about.clicked.connect(self.win.show_about)
@@ -1265,7 +1274,7 @@ class SettingsPanel(QFrame):
         trouble.clicked.connect(self.win.show_troubleshooting)
         btns.addWidget(about)
         btns.addWidget(trouble)
-        right.addLayout(btns, 14, 0, 1, 3)
+        right.addLayout(btns, 16, 0, 1, 3)
         right.setColumnStretch(1, 1)
 
         # ---- footer
@@ -1334,6 +1343,7 @@ class SettingsPanel(QFrame):
             self.hevc.setChecked(bool(gs["hevc_native"]))
             self.up_next.setChecked(bool(gs.get("up_next", True)))
             self.skip_intro.setChecked(bool(gs.get("skip_intro", True)))
+            self.updates.setChecked(bool(gs.get("check_updates", True)))
             self._enable(bool(path))
         finally:
             self.loading = False
@@ -1708,6 +1718,7 @@ class MainWindow(QWidget):
         self._shortcuts()
         if discover:
             self.discovery.start()
+            QTimer.singleShot(8000, self._auto_check_updates)  # (the real app only: tests don't ask GitHub)
         worker(self._detect_encoder)
         self._probe_durations()
         self._update_header()
@@ -1854,6 +1865,24 @@ class MainWindow(QWidget):
         self.live_stop.clicked.connect(lambda: self.end_screen(stop_tv=True))
         self.live_sound.clicked.connect(
             lambda: self._set_screen_sound(not self.state["global"].get("screen_sound", True)))
+        # "Update" bar: a newer Video Caster is out - install it (or download it), or later
+        self.update_bar = QFrame()
+        self.update_bar.setStyleSheet(bar_style)
+        upb = QHBoxLayout(self.update_bar)
+        upb.setContentsMargins(12, 5, 10, 5)
+        self.update_label = QLabel()
+        self.update_label.setTextFormat(Qt.RichText)
+        self.update_label.setOpenExternalLinks(True)
+        self.update_go = QPushButton("Update now")
+        self.update_later = QPushButton("Later")
+        upb.addWidget(self.update_label, 1)
+        upb.addWidget(self.update_go)
+        upb.addWidget(self.update_later)
+        self.update_bar.hide()
+        root.addWidget(self.update_bar)
+        self.update_info, self.update_busy, self.update_stop = None, False, None
+        self.update_go.clicked.connect(self._update_go)
+        self.update_later.clicked.connect(self._update_later)
 
         self.list_area = QWidget()
         self.list_area.setStyleSheet(f"background: {LIST_BG};")
@@ -2344,6 +2373,9 @@ class MainWindow(QWidget):
         """Apply a settings change to what is playing: the subtitles' look (size, colour,
         font) changes live on the TV; anything that changes the stream restarts it at the
         current position (burned-in subtitles are part of the picture, so they restart too)."""
+        if key == "check_updates":  # nothing to do with what plays
+            self.save()
+            return
         if self.player is None or not self.now_path or (path and path != self.now_path):
             return
         if key in be.SUB_STYLE_KEYS and self.stream and self.stream.get("sub_url"):
@@ -3742,11 +3774,149 @@ class MainWindow(QWidget):
         self.bridge.call.emit(lambda: setattr(self, "encoder", enc))
 
     def show_about(self):
-        QMessageBox.about(self, f"About {APP_NAME}",
-                          f"<b>{APP_NAME}</b><br>Plays videos from this PC on a Chromecast or Apple TV.<br><br>"
-                          "Drop videos or folders on the window, choose the TV with the TV button and press play. "
-                          "Videos the TV can't play are converted while they play.<br><br>"
-                          "Keys: Space play/pause, Left/Right skip, Up/Down TV volume, Delete remove.")
+        box = QMessageBox(self)
+        box.setWindowTitle(f"About {APP_NAME}")
+        box.setIconPixmap(app_icon().pixmap(48, 48))
+        box.setText(f"<b>{APP_NAME} {be.APP_VERSION}</b><br>Plays videos from this PC on a Chromecast or Apple TV, "
+                    "and shows your screen there.<br><br>"
+                    "Choose the TV at the top, drop videos or folders on the window and double-click one. Videos "
+                    "the TV can't play are converted while they play. The screen button mirrors your screen or "
+                    "uses the TV as a second display.<br><br>"
+                    "Keys: Space play/pause, Left/Right skip, Ctrl+Up/Down TV volume, Delete remove.<br><br>"
+                    f"<a href='https://github.com/{be.UPDATE_REPO}'>github.com/{be.UPDATE_REPO}</a>")
+        box.setTextFormat(Qt.RichText)
+        check = box.addButton("Check for updates", QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Close)
+        box.exec()
+        if box.clickedButton() is check:
+            self.check_updates(manual=True)
+
+    # ----- updates
+    def _auto_check_updates(self):
+        """At start (once a day, if switched on): is a newer Video Caster out?"""
+        if not self.state["global"].get("check_updates", True):
+            return
+        if time.time() - float(self.state.get("update_checked", 0)) < 20 * 3600:
+            known = self.state.get("update_available")  # found earlier today: offer it again
+            if known and be.version_tuple(known.get("version")) > be.version_tuple(be.APP_VERSION):
+                self._offer_update(known, manual=False)
+            return
+        self.check_updates(manual=False)
+
+    def check_updates(self, manual=False):
+        def work():
+            try:
+                info, err = be.check_for_update(), None
+            except Exception as e:
+                info, err = None, str(e) or e.__class__.__name__
+            self.bridge.call.emit(lambda: self._updates_checked(info, err, manual))
+
+        if manual:
+            self.flash("Checking for updates...", 10)
+        worker(work)
+
+    def _updates_checked(self, info, err, manual):
+        self.message_until = 0
+        self._update_header()
+        if err:
+            be.log(f"update check failed: {err}")
+            if manual:
+                QMessageBox.information(self, APP_NAME, f"Couldn't check for updates.\n\n{err}")
+            return
+        self.state["update_checked"] = time.time()
+        self.state["update_available"] = info
+        self.save()
+        if not info:
+            be.log(f"update check: {be.APP_VERSION} is the newest version")
+            if manual:
+                QMessageBox.information(self, APP_NAME, f"{APP_NAME} {be.APP_VERSION} is the newest version.")
+            return
+        be.log(f"update check: {info['version']} is available (this is {be.APP_VERSION})")
+        self._offer_update(info, manual)
+
+    def _offer_update(self, info, manual):
+        later = self.state.get("update_later") or {}
+        if (not manual and later.get("version") == info["version"] and time.time() < later.get("until", 0)) \
+                or self.update_busy:
+            return
+        self.update_info = info
+        installed = be.installed_copy()
+        self.update_label.setText(f"{APP_NAME} {info['version']} is available. "
+                                  f"<a href='{info['page']}' style='color: white;'>What's new</a>")
+        self.update_go.setText("Update now" if installed else "Download")
+        self.update_go.setToolTip("Downloads the new version, checks it, installs it over this one and starts "
+                                  "Video Caster again - your playlists and settings stay." if installed else
+                                  "Opens the download page (this copy isn't installed with Setup)")
+        self.update_later.setText("Later")
+        self.update_later.show()
+        self.update_bar.show()
+
+    def _update_later(self):
+        if self.update_info:
+            self.state["update_later"] = {"version": self.update_info["version"], "until": time.time() + 3 * 86400}
+            self.save()
+        self.update_bar.hide()
+
+    def _update_go(self):
+        info = self.update_info
+        if info is None:
+            return
+        if self.update_busy:  # 'Cancel' while downloading
+            if self.update_stop is not None:
+                self.update_stop.set()
+            return
+        if not be.installed_copy():
+            QDesktopServices.openUrl(QUrl(info["page"]))
+            self.update_bar.hide()
+            return
+        if (self.player is not None or self.screen is not None) and QMessageBox.question(
+                self, APP_NAME, "Updating closes Video Caster for a moment, which stops what's on the TV. "
+                                "Update now?") != QMessageBox.Yes:
+            return
+        self.update_busy, self.update_stop = True, threading.Event()
+        self.update_go.setText("Cancel")
+        self.update_later.hide()
+        self.update_label.setText(f"Downloading {APP_NAME} {info['version']}...")
+        last = [0.0]
+
+        def progress(done, total):
+            if time.time() - last[0] >= 0.25 or (total and done >= total):
+                last[0] = time.time()
+                self.bridge.call.emit(lambda: self._update_progress(info, done, total))
+
+        def work():
+            try:
+                path = be.download_update(info, progress, self.update_stop)
+                self.bridge.call.emit(lambda: self._update_install(info, path))
+            except Exception as e:
+                msg = str(e) or e.__class__.__name__
+                self.bridge.call.emit(lambda: self._update_failed(info, msg))
+
+        worker(work)
+
+    def _update_progress(self, info, done, total):
+        if self.update_busy:
+            pct = f" {done * 100 // total}%" if total else f" {done / 1e6:.0f} MB"
+            self.update_label.setText(f"Downloading {APP_NAME} {info['version']}...{pct}")
+
+    def _update_failed(self, info, msg):
+        self.update_busy = False
+        be.log(f"update: download of {info['version']} stopped: {msg}")
+        self._offer_update(info, manual=True)
+        if msg != "cancelled":
+            QMessageBox.warning(self, APP_NAME, f"The update couldn't be downloaded.\n\n{msg}")
+
+    def _update_install(self, info, path):
+        self.update_label.setText(f"Installing {APP_NAME} {info['version']} - it starts again by itself")
+        self.update_go.hide()
+        try:
+            be.start_installer(path)
+        except Exception as e:
+            self.update_busy = False
+            self.update_go.show()
+            QMessageBox.warning(self, APP_NAME, f"The update couldn't be started.\n\n{e}")
+            return
+        QTimer.singleShot(400, self.close)  # Setup replaces the app; it closes it anyway if still open
 
     def show_troubleshooting(self):
         ff = shutil.which("ffmpeg") or "not found"

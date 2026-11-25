@@ -47,6 +47,7 @@ except Exception:  # pragma: no cover
     NETWORK_IMPORT_ERRORS["airplay"] = traceback.format_exc()
 
 APP_NAME = "Video Caster"
+APP_VERSION = "0.3.3"  # the one place for the version: build-installer.ps1 reads it from here
 APP_DIR = Path(__file__).resolve().parent
 # A one-file executable extracts its code into a temporary directory. Keep user
 # data outside that directory so upgrades and closing the app cannot erase it.
@@ -147,6 +148,7 @@ GLOBAL_DEFAULTS = {
     "skip_intro": True,        # a series' opening titles (found by comparing episodes): skipped
     "screen_sound": True,      # casting the PC screen: with the PC's sound
     "screen_mirror": True,     # ...to a Chromecast: Google's mirroring (well under a second behind)
+    "check_updates": True,     # once a day: is there a newer Video Caster on GitHub?
     "sub_font": "Sans-serif",  # subtitle font and style: for all videos
     "sub_font_style": "Normal",
 }
@@ -4131,3 +4133,91 @@ def make_player(device, discovery):
     if not pyatv or device.obj is None:
         raise RuntimeError(f"{device.name} isn't available right now.")
     return AppleTvPlayer(device, discovery.aio)
+
+
+# --------------------------------------------------------------------------- updates
+# Once a day (switchable in the settings) the app asks GitHub for the newest release - only that
+# request, nothing about the user or their videos. An installed copy can then download the new
+# Setup, check it against the release's SHA256SUMS.txt and install it over itself.
+
+UPDATE_REPO = "TVAVAE/video-caster"
+UPDATE_API = os.environ.get("VIDEOCASTER_UPDATE_API", f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest")
+UPDATE_PAGE = f"https://github.com/{UPDATE_REPO}/releases/latest"
+_UPDATE_HEADERS = {"User-Agent": f"VideoCaster/{APP_VERSION}", "Accept": "application/vnd.github+json"}
+
+
+def version_tuple(v):
+    """(major, minor, patch) from '0.3.2' or 'v0.3.2'."""
+    nums = [int(x) for x in re.findall(r"\d+", str(v or ""))[:3]]
+    return tuple(nums + [0] * (3 - len(nums)))
+
+
+def check_for_update(timeout=10):
+    """The newest release if it's newer than this app, else None:
+    {version, page, notes, setup_url, setup_size, sums_url}. Raises on network trouble."""
+    req = urllib.request.Request(UPDATE_API, headers=_UPDATE_HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    tag = data.get("tag_name") or ""
+    if data.get("draft") or data.get("prerelease") or version_tuple(tag) <= version_tuple(APP_VERSION):
+        return None
+    assets = {a.get("name"): a for a in data.get("assets") or []}
+    setup, sums = assets.get("VideoCaster-Setup.exe") or {}, assets.get("SHA256SUMS.txt") or {}
+    return {"version": tag.lstrip("vV"), "page": data.get("html_url") or UPDATE_PAGE, "notes": data.get("body") or "",
+            "setup_url": setup.get("browser_download_url"), "setup_size": setup.get("size") or 0,
+            "sums_url": sums.get("browser_download_url")}
+
+
+def installed_copy():
+    """True for the installed app (Setup's uninstaller beside it): updates install over it."""
+    return bool(getattr(sys, "frozen", False)) and (Path(sys.executable).parent / "unins000.exe").exists()
+
+
+def download_update(info, progress=None, stop=None):
+    """Download the new Setup into %TEMP% and check it against the release's SHA256SUMS.txt;
+    progress(done, total) while it comes in. Returns its path; raises if it doesn't match."""
+    if not info.get("setup_url") or not info.get("sums_url"):
+        raise RuntimeError("This release has no installer with a checksum.")
+    with urllib.request.urlopen(urllib.request.Request(info["sums_url"], headers=_UPDATE_HEADERS), timeout=20) as r:
+        sums = r.read().decode("utf-8", "replace")
+    expected = next((ln.split()[0].lower() for ln in sums.splitlines()
+                     if ln.strip().endswith("VideoCaster-Setup.exe") and ln.split()), None)
+    if not expected:
+        raise RuntimeError("The release's checksum list has no entry for the installer.")
+    folder = Path(os.environ.get("TEMP") or CACHE_DIR)
+    dest = folder / f"VideoCaster-Setup-{info['version']}.exe"
+    part = dest.with_suffix(".part")
+    h, done = hashlib.sha256(), 0
+    with urllib.request.urlopen(urllib.request.Request(info["setup_url"], headers=_UPDATE_HEADERS), timeout=30) as r, \
+            open(part, "wb") as f:
+        total = int(r.headers.get("Content-Length") or info.get("setup_size") or 0)
+        while True:
+            if stop is not None and stop.is_set():
+                f.close()
+                part.unlink(missing_ok=True)
+                raise RuntimeError("cancelled")
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+            h.update(chunk)
+            done += len(chunk)
+            if progress:
+                progress(done, total)
+    if h.hexdigest() != expected:
+        part.unlink(missing_ok=True)
+        raise RuntimeError("The download doesn't match the release's checksum, so it wasn't used.")
+    part.replace(dest)
+    log(f"update: downloaded and checked Video Caster {info['version']} ({done / 1e6:.0f} MB)")
+    return dest
+
+
+def start_installer(setup_path):
+    """Start the new Setup quietly as an upgrade of this installation (Windows asks for permission
+    when it's installed for all users); it starts Video Caster again when it's done."""
+    here = Path(sys.executable).resolve()
+    per_user = str(here).lower().startswith(str(Path(os.environ.get("LOCALAPPDATA", "~")).resolve()).lower())
+    args = [str(setup_path), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/RESTARTAPP=1",
+            "/CURRENTUSER" if per_user else "/ALLUSERS"]
+    subprocess.Popen(args, close_fds=True)
+    log(f"update: started {Path(setup_path).name} ({'for this user' if per_user else 'for all users'})")
