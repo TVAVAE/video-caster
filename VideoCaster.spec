@@ -18,6 +18,13 @@ for package in ("pyatv", "pychromecast", "zeroconf"):
 datas += copy_metadata("pyatv", recursive=True)
 # The logo (window and taskbar icon); tools/make_icon.py draws it.
 datas.append((str(root / "app" / "assets"), "assets"))
+# The Virtual Display Driver for 'Use the TV as a second display' (build-windows.ps1 fetches and
+# checks it; see third_party/VirtualDisplayDriver). Installed only when a user asks for it.
+vdd = root / "build" / "display-driver"
+if (vdd / "MttVDD.inf").is_file():
+    datas.append((str(vdd), "display-driver"))
+else:
+    print("WARNING: build/display-driver is missing - 'Use the TV as a second display' won't be able to install it")
 # Some Python runtimes ship an additional trust-policy file beside ssl.py.
 # ssl.SSLContext reads it relative to __file__, including inside a frozen app.
 # Preserve it rather than changing or disabling certificate validation.

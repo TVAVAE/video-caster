@@ -21,20 +21,19 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing, with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.2.1
+## What's new in 0.3.0
 
-- **Cast your screen with almost no delay**: on a Chromecast or Google TV the screen now goes
-  over Google's own screen mirroring (as Chrome's *Cast screen* does), a fraction of a second
-  behind instead of several seconds - see [Cast your screen](#cast-your-screen).
-- **The screen as a video stream plays smoothly** on Google TV (Apple TV, or with *Low delay*
-  off), instead of one picture every second or so.
-- **4K films start reliably**: a slow first conversion no longer switches the TV to a fallback
-  format it can't play.
-- **No stray conversions after a crash**: FFmpeg always ends with the app.
+- **Use the TV as a second display**: an extra screen to the right of yours, shown on the TV.
+  Drag windows onto it and keep working on your own screen. Video Caster brings everything it
+  needs - see [The TV as a second display](#the-tv-as-a-second-display).
+- **The right screen is cast** on PCs with several displays, also when Windows lists them in
+  another order.
+- Stopping a mirrored screen without the app's picture coming back now also closes the
+  mirroring on the TV.
 
-0.2.0 added *Cast your screen*, the logo, a window that always opens on screen, closing without
-freezing and a cache that cleans itself. Earlier versions and downloads:
-[releases](https://github.com/TVAVAE/video-caster/releases).
+0.2.1 brought low-delay screen mirroring on Chromecast and Google TV, a smooth screen stream on
+Google TV and reliable starts of 4K films; 0.2.0 added *Cast your screen* and the logo. Earlier
+versions and downloads: [releases](https://github.com/TVAVAE/video-caster/releases).
 
 ## Features
 
@@ -81,6 +80,8 @@ freezing and a cache that cleans itself. Earlier versions and downloads:
   on the TV, live, with the PC's sound. On a Chromecast or Google TV it uses Google's own screen
   mirroring and is a fraction of a second behind; on an Apple TV it's a few seconds behind.
   No extra software needed.
+- **The TV as a second display**: an extra screen next to yours that shows on the TV - drag
+  windows there and keep working on your own screen.
 
 **TVs**
 - Chromecast, Google TV and TVs with Chromecast built-in - found automatically on your network.
@@ -190,7 +191,7 @@ arrow, next to the gear) and choose *Cast my screen* - or one of your screens if
 If no TV is chosen yet, the app asks for one first.
 
 <p align="center">
-  <img src="docs/screen-menu.png" alt="The screen button's menu: Cast this PC's screen to Living Room TV, Cast my screen (1920 x 1200), With the PC's sound, Low delay (mirroring)" width="256">
+  <img src="docs/screen-menu.png" alt="The screen button's menu: Cast this PC's screen to Living Room TV, Cast my screen (1920 x 1200), Use the TV as a second display, With the PC's sound, Low delay (mirroring)" width="256">
 </p>
 
 - The window shows *Your screen - Mirroring to ... with sound* (or *Casting to ...*, see below);
@@ -210,6 +211,25 @@ If no TV is chosen yet, the app asks for one first.
   FFmpeg, encoded on the graphics chip when the PC has one) and the sound with Windows' own
   audio loopback. Your screen goes only to the TV you picked, and only while casting; mirroring
   is encrypted, as the protocol requires.
+
+### The TV as a second display
+
+Choose **Use the TV as a second display** in the screen button's menu to get an extra screen
+to the right of yours that shows on the TV: move the mouse past the right edge of your screen,
+drag windows there (or press Win+Shift+→), and keep working on your own screen. It's 1920 x 1080
+and, on a Chromecast or Google TV, a fraction of a second behind.
+
+- The extra screen exists only while it's cast: *Stop* (or playing a video) switches it off,
+  and its windows come back to your own screen. If you set up such a screen yourself, Video
+  Caster casts it and leaves it as it is.
+- Windows extends the desktop only onto displays it knows, so this needs a **virtual display**.
+  Video Caster includes the free, open-source
+  [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT
+  license, signed by the SignPath Foundation). The first time you choose the option, Video
+  Caster asks whether to install it, and Windows asks for admin permission - only once.
+  Nothing is installed if you don't use the option.
+- To remove the driver again: Device Manager → *Display adapters* → *Virtual Display Driver* →
+  *Uninstall device* (tick *Attempt to remove the driver*), then delete `C:\VirtualDisplayDriver`.
 
 ### Keyboard
 
@@ -266,6 +286,7 @@ your own API key.
 | `app/backend.py` | The engine: finding TVs, the media server, deciding how to play each file, FFmpeg, HLS, subtitles, credits and intro detection, OpenSubtitles, casting and mirroring the screen |
 | `app/assets/` | The logo: `videocaster.ico` (exe, installer, shortcuts) and the window and taskbar icons |
 | `tools/make_icon.py` | Draws the logo - change it there and run `python tools\make_icon.py` |
+| `third_party/VirtualDisplayDriver/` | License and source of the virtual display driver for *Use the TV as a second display* (the build fetches the driver itself) |
 | `app/state.json` | Your playlists, settings and watch progress (created on first run) |
 | `app/cache/` | Converted pieces, thumbnails, extracted subtitles - leftovers are cleaned up automatically when the app starts |
 | `app/videocaster.log` | What happened during playback - handy when something goes wrong |
@@ -294,6 +315,9 @@ instead of `app/`.
   rather than *Mirroring to*, the TV didn't accept mirroring; the log says why.
 - **Mirroring stutters or freezes** - untick *Low delay (mirroring)*: the video stream is
   further behind but copes better with weak Wi-Fi.
+- **Windows or the mouse vanish to the right** - an extra screen is still on (e.g. a virtual
+  display you set up yourself). Press Win+P and choose *PC screen only*, or Win+Shift+← to bring
+  a window back.
 - **Playback stutters** - run the *Speed Test*, or set *Quality* lower. On a weak connection the
   app switches to adaptive streaming by itself.
 - **The window doesn't appear** - it opens where it was last closed; since 0.2.0 it moves back
@@ -323,6 +347,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-windows.ps1
 Use `-Python "C:\Path\To\python.exe"` to select a Python installation when creating
 the build environment. The script creates `.venv-build`, installs
 `requirements-build.txt`, and builds **`dist\VideoCaster.exe`** using PyInstaller.
+It also fetches the Virtual Display Driver for *Use the TV as a second display* from that
+project's release - one exact file, checked by hash and signature (see
+`third_party/VirtualDisplayDriver/README.md`) - and puts it into the executable; pass
+`-DisplayDriverZip <path>` to use a copy you downloaded yourself.
 `VideoCaster.spec` includes dynamically loaded Chromecast and AirPlay modules;
 only application code and dependency resources are bundled, never personal settings or cache.
 FFmpeg is not bundled. Build output and the build environment are ignored by Git.
@@ -358,8 +386,8 @@ containing `bin` and `LICENSE`, and at Inno Setup's `ISCC.exe` (winget installs 
 ```
 
 This builds the app and **`dist\VideoCaster-Setup.exe`**. Use `-SkipAppBuild` to package
-an already built `dist\VideoCaster.exe`, or `-Version "0.2.1"` to set the installer
-version (the default is the current release, 0.2.1). The exe, installer and shortcut icons
+an already built `dist\VideoCaster.exe`, `-DisplayDriverZip <path>` as above, or
+`-Version "0.3.1"` to set the installer version (the default is the current release, 0.3.0). The exe, installer and shortcut icons
 come from `app/assets/videocaster.ico`. `installer/VideoCaster.iss` defines installation, shortcuts, optional private
 network firewall rules, and uninstall. FFmpeg's license and build information are
 installed with it. Downloaded tools and staged payloads are not committed to Git.
@@ -386,5 +414,6 @@ For testing there are two environment variables:
 
 Built with [PySide6](https://doc.qt.io/qtforpython-6/), [pychromecast](https://github.com/home-assistant-libs/pychromecast),
 [pyatv](https://pyatv.dev), [NumPy](https://numpy.org), [FFmpeg](https://ffmpeg.org) with
-[Chromaprint](https://acoustid.org/chromaprint); subtitles from [OpenSubtitles](https://www.opensubtitles.com),
+[Chromaprint](https://acoustid.org/chromaprint), the
+[Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver); subtitles from [OpenSubtitles](https://www.opensubtitles.com),
 through [Stremio](https://www.stremio.com)'s add-ons or the [OpenSubtitles.com API](https://opensubtitles.stoplight.io).

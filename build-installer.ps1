@@ -1,8 +1,9 @@
 param(
     [Parameter(Mandatory = $true)][string]$FFmpegDirectory,
     [string]$ISCC = "ISCC.exe",
-    [string]$Version = "0.2.1",
+    [string]$Version = "0.3.0",
     [string]$Python = "python",
+    [string]$DisplayDriverZip = "",
     [switch]$SkipAppBuild
 )
 
@@ -24,7 +25,7 @@ if (-not $license) { throw "The FFmpeg distribution must include its license." }
 
 Push-Location $PSScriptRoot
 try {
-    if (-not $SkipAppBuild) { & .\build-windows.ps1 -Python $Python }
+    if (-not $SkipAppBuild) { & .\build-windows.ps1 -Python $Python -DisplayDriverZip $DisplayDriverZip }
     $appExe = Join-Path $PSScriptRoot 'dist\VideoCaster.exe'
     if (-not (Test-Path -LiteralPath $appExe)) { throw 'Build dist\VideoCaster.exe first.' }
     $payload = Join-Path $PSScriptRoot 'build\installer-payload'

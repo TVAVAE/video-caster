@@ -2203,6 +2203,350 @@ class LoopbackAudio:
                 ctypes.windll.ole32.CoTaskMemFree(pwfx)
 
 
+def capture_displays():
+    """Every display the screen capture (Desktop Duplication) can reach, numbered the way
+    ffmpeg's ddagrab counts them: [{adapter, output, name (Windows' \\\\.\\DISPLAYn), rect, gpu,
+    attached}]. A virtual display (a TV used as a second screen) usually has an adapter of its own."""
+    if sys.platform != "win32":
+        return []
+    ctypes, _, guid, call = _com()
+    from ctypes import POINTER, byref, c_long, c_uint, c_ulong, c_void_p
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", c_long), ("t", c_long), ("r", c_long), ("b", c_long)]
+
+    class OUTPUT_DESC(ctypes.Structure):
+        _fields_ = [("name", ctypes.c_wchar * 32), ("rect", RECT), ("attached", ctypes.c_int),
+                    ("rotation", c_uint), ("monitor", c_void_p)]
+
+    class ADAPTER_DESC(ctypes.Structure):
+        _fields_ = [("desc", ctypes.c_wchar * 128), ("vendor", c_uint), ("device", c_uint), ("subsys", c_uint),
+                    ("rev", c_uint), ("vram", ctypes.c_size_t), ("sysmem", ctypes.c_size_t),
+                    ("shared", ctypes.c_size_t), ("luid_low", c_ulong), ("luid_high", c_long)]
+
+    objs, out = [], []
+    factory = c_void_p()
+    try:
+        ctypes.OleDLL("dxgi").CreateDXGIFactory1(byref(guid("770aae78-f26f-4dba-a829-253c83d1b387")), byref(factory))
+        objs.append(factory)
+        for ai in range(16):
+            adapter = c_void_p()
+            try:
+                call(factory, 12, ai, byref(adapter), types=(c_uint, POINTER(c_void_p)))  # EnumAdapters1
+            except OSError:
+                break  # no more adapters
+            objs.append(adapter)
+            ad = ADAPTER_DESC()
+            call(adapter, 8, byref(ad), types=(POINTER(ADAPTER_DESC),))  # GetDesc
+            for oi in range(16):
+                output = c_void_p()
+                try:
+                    call(adapter, 7, oi, byref(output), types=(c_uint, POINTER(c_void_p)))  # EnumOutputs
+                except OSError:
+                    break
+                objs.append(output)
+                od = OUTPUT_DESC()
+                call(output, 7, byref(od), types=(POINTER(OUTPUT_DESC),))  # GetDesc
+                r = od.rect
+                out.append({"adapter": ai, "output": oi, "name": od.name, "rect": (r.l, r.t, r.r, r.b),
+                            "gpu": ad.desc, "attached": bool(od.attached)})
+    except OSError:
+        pass
+    finally:
+        _release(objs)
+    return out
+
+
+def capture_target(name=None, index=0, rect=None):
+    """(adapter, output) to capture a display of the app's screen list: by its Windows name
+    (\\\\.\\DISPLAY2 - Qt's QScreen.name() gives that only for screens without a monitor name;
+    a virtual display reports e.g. 'VDD by MTT'), else by rect=(x, y, width, height) in pixels
+    (same size, nearest position), else the index-th display on the desktop."""
+    try:
+        shown = [d for d in capture_displays() if d["attached"]]
+    except Exception:
+        shown = []
+    for d in shown:
+        if name and d["name"].lower() == str(name).lower():
+            return d["adapter"], d["output"]
+    if rect:
+        x, y, w, h = rect
+        same = [d for d in shown if (d["rect"][2] - d["rect"][0], d["rect"][3] - d["rect"][1]) == (w, h)]
+        if same:
+            d = min(same, key=lambda d: abs(d["rect"][0] - x) + abs(d["rect"][1] - y))
+            return d["adapter"], d["output"]
+    if 0 <= index < len(shown):
+        return shown[index]["adapter"], shown[index]["output"]
+    return 0, index
+
+
+def _ddagrab_args(monitor):
+    """(ffmpeg arguments before the filter graph, ddagrab output number) for monitor = an output
+    number on the main graphics adapter, or (adapter, output) from capture_target()."""
+    adapter, output = (int(monitor[0]), int(monitor[1])) if isinstance(monitor, (tuple, list)) else (0, int(monitor))
+    pre = ["-init_hw_device", f"d3d11va=dda:{adapter}", "-filter_hw_device", "dda"] if adapter else []
+    return pre, output
+
+
+# --------------------------------------------------------------------------- the TV as a second display
+# Windows extends the desktop only onto real displays. The Virtual Display Driver (MIT,
+# https://github.com/VirtualDrivers/Virtual-Display-Driver, signed by the SignPath Foundation)
+# adds one; Video Caster bundles its driver files, installs them once on request (Windows
+# asks for permission), switches that display on while it is cast and off afterwards.
+
+VDD_HWID = "Root\\MttVDD"
+VDD_NAME = "Virtual Display Driver"
+VDD_SETTINGS_DIR = Path("C:/VirtualDisplayDriver")  # where the driver reads vdd_settings.xml
+TV_DISPLAY_SIZE = (1920, 1080)
+
+
+def _win_display():
+    """ctypes types for the display APIs: (ctypes, DISPLAY_DEVICEW, DEVMODEW, user32)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class DISPLAY_DEVICEW(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("DeviceName", ctypes.c_wchar * 32), ("DeviceString", ctypes.c_wchar * 128),
+                    ("StateFlags", wintypes.DWORD), ("DeviceID", ctypes.c_wchar * 128),
+                    ("DeviceKey", ctypes.c_wchar * 128)]
+
+    class DEVMODEW(ctypes.Structure):
+        _fields_ = [("dmDeviceName", ctypes.c_wchar * 32), ("dmSpecVersion", wintypes.WORD),
+                    ("dmDriverVersion", wintypes.WORD), ("dmSize", wintypes.WORD), ("dmDriverExtra", wintypes.WORD),
+                    ("dmFields", wintypes.DWORD), ("dmPositionX", wintypes.LONG), ("dmPositionY", wintypes.LONG),
+                    ("dmDisplayOrientation", wintypes.DWORD), ("dmDisplayFixedOutput", wintypes.DWORD),
+                    ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short), ("dmYResolution", ctypes.c_short),
+                    ("dmTTOption", ctypes.c_short), ("dmCollate", ctypes.c_short), ("dmFormName", ctypes.c_wchar * 32),
+                    ("dmLogPixels", wintypes.WORD), ("dmBitsPerPel", wintypes.DWORD), ("dmPelsWidth", wintypes.DWORD),
+                    ("dmPelsHeight", wintypes.DWORD), ("dmDisplayFlags", wintypes.DWORD),
+                    ("dmDisplayFrequency", wintypes.DWORD), ("dmICMMethod", wintypes.DWORD),
+                    ("dmICMIntent", wintypes.DWORD), ("dmMediaType", wintypes.DWORD), ("dmDitherType", wintypes.DWORD),
+                    ("dmReserved1", wintypes.DWORD), ("dmReserved2", wintypes.DWORD),
+                    ("dmPanningWidth", wintypes.DWORD), ("dmPanningHeight", wintypes.DWORD)]
+
+    return ctypes, DISPLAY_DEVICEW, DEVMODEW, ctypes.windll.user32
+
+
+def _display_devices():
+    """Windows' display outputs: [(name like \\\\.\\DISPLAY13, adapter description, hardware id, on the desktop)]."""
+    if sys.platform != "win32":
+        return []
+    ctypes, DISPLAY_DEVICEW, _, user32 = _win_display()
+    out, i = [], 0
+    while True:
+        d = DISPLAY_DEVICEW()
+        d.cb = ctypes.sizeof(d)
+        if not user32.EnumDisplayDevicesW(None, i, ctypes.byref(d), 0):
+            return out
+        out.append((d.DeviceName, d.DeviceString, d.DeviceID, bool(d.StateFlags & 0x1)))
+        i += 1
+
+
+def _display_mode(name):
+    """(x, y, width, height, hz) of a display on the desktop, or None."""
+    ctypes, _, DEVMODEW, user32 = _win_display()
+    dm = DEVMODEW()
+    dm.dmSize = ctypes.sizeof(dm)
+    if not user32.EnumDisplaySettingsW(name, -1, ctypes.byref(dm)):  # ENUM_CURRENT_SETTINGS
+        return None
+    return dm.dmPositionX, dm.dmPositionY, dm.dmPelsWidth, dm.dmPelsHeight, dm.dmDisplayFrequency
+
+
+def virtual_display():
+    """The virtual display for the TV, if its driver is installed: {name, attached, rect=(x, y, w, h)}."""
+    for name, desc, hwid, attached in _display_devices():
+        if hwid.lower() == VDD_HWID.lower() or desc == VDD_NAME:
+            mode = _display_mode(name) if attached else None
+            return {"name": name, "attached": attached and bool(mode and mode[2]),
+                    "rect": tuple(mode[:4]) if mode else None}
+    return None
+
+
+def _set_display(name, x=None, y=None, width=0, height=0, hz=None):
+    """Put a display on the desktop at (x, y) with that size (and refresh rate), or take it off
+    with width = height = 0; True if Windows took it. Windows moves windows off a removed display."""
+    ctypes, _, DEVMODEW, user32 = _win_display()
+    dm = DEVMODEW()
+    dm.dmSize = ctypes.sizeof(dm)
+    user32.EnumDisplaySettingsW(name, -2, ctypes.byref(dm))  # ENUM_REGISTRY_SETTINGS: keep the rest
+    dm.dmPelsWidth, dm.dmPelsHeight = width, height
+    dm.dmFields = 0x20 | 0x80000 | 0x100000  # DM_POSITION | DM_PELSWIDTH | DM_PELSHEIGHT
+    dm.dmPositionX, dm.dmPositionY = int(x or 0), int(y or 0)
+    if hz:
+        dm.dmDisplayFrequency = hz
+        dm.dmFields |= 0x400000  # DM_DISPLAYFREQUENCY
+    r = user32.ChangeDisplaySettingsExW(name, ctypes.byref(dm), None, 0x1 | 0x10000000, None)  # UPDATEREGISTRY|NORESET
+    if r == 0:
+        r = user32.ChangeDisplaySettingsExW(None, None, None, 0, None)  # apply
+    return r == 0
+
+
+def attach_virtual_display(size=TV_DISPLAY_SIZE, timeout=6.0):
+    """Switch the TV's virtual display on: right of the other displays, at `size` (60 Hz when
+    offered). Returns {name, rect, ours} - ours: it was off and this switched it on."""
+    vd = virtual_display()
+    if vd is None:
+        raise RuntimeError("The virtual display isn't installed.")
+    ours = not vd["attached"]
+    if not ours and vd["rect"] and tuple(vd["rect"][2:]) == tuple(size):
+        return dict(vd, ours=False)
+    right = max([m[0] + m[2] for n, _, _, on in _display_devices()
+                 if on and n != vd["name"] and (m := _display_mode(n))] or [0])
+    x = vd["rect"][0] if vd["attached"] and vd["rect"] else right
+    for hz in (60, None):
+        if _set_display(vd["name"], x, 0, *size, hz=hz):
+            break
+    else:  # Windows refused the legacy way: extend all displays, as Win+P > Extend does
+        subprocess.run([str(Path(os.environ.get("WINDIR", "C:/Windows")) / "System32" / "DisplaySwitch.exe"),
+                        "/extend"], creationflags=NO_WINDOW, timeout=15)
+    end = time.time() + timeout
+    while time.time() < end:
+        vd = virtual_display()
+        if vd and vd["attached"]:
+            if tuple(vd["rect"][2:]) != tuple(size):
+                _set_display(vd["name"], vd["rect"][0], vd["rect"][1], *size, hz=60) or \
+                    _set_display(vd["name"], vd["rect"][0], vd["rect"][1], *size)
+                vd = virtual_display() or vd
+            log(f"TV display: {vd['name']} on at {vd['rect']}")
+            return dict(vd, ours=ours)
+        time.sleep(0.25)
+    raise RuntimeError("Windows didn't switch the virtual display on.")
+
+
+def detach_virtual_display():
+    """Switch the TV's virtual display off again (its windows move back to the other screens)."""
+    vd = virtual_display()
+    if vd and vd["attached"]:
+        ok = _set_display(vd["name"])
+        log(f"TV display: {vd['name']} off" + ("" if ok else " - Windows refused"))
+        return ok
+    return True
+
+
+def display_driver_files():
+    """The bundled Virtual Display Driver (the folder with MttVDD.inf), or None. The build puts
+    it in the executable; from source it's in build/display-driver after a build."""
+    for base in (Path(getattr(sys, "_MEIPASS", APP_DIR)) / "display-driver", APP_DIR / "display-driver",
+                 APP_DIR.parent / "build" / "display-driver"):
+        if (base / "MttVDD.inf").is_file():
+            return base
+    return None
+
+
+def install_virtual_display(timeout=180):
+    """Install the bundled Virtual Display Driver: runs this app once more with admin rights
+    (Windows asks the user). Returns {ok, error, cancelled, steps}."""
+    import ctypes
+    from ctypes import wintypes
+    result = Path(os.environ.get("TEMP", str(CACHE_DIR))) / f"videocaster-vdd-{uuid.uuid4().hex[:8]}.json"
+    if getattr(sys, "frozen", False):
+        exe, args = sys.executable, f'--install-display-driver "{result}"'
+    else:
+        exe, args = sys.executable, f'"{APP_DIR / "main.py"}" --install-display-driver "{result}"'
+
+    class SHELLEXECUTEINFOW(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("fMask", ctypes.c_ulong), ("hwnd", wintypes.HWND),
+                    ("lpVerb", wintypes.LPCWSTR), ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
+                    ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE),
+                    ("lpIDList", ctypes.c_void_p), ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY),
+                    ("dwHotKey", wintypes.DWORD), ("hIcon", wintypes.HANDLE), ("hProcess", wintypes.HANDLE)]
+
+    sei = SHELLEXECUTEINFOW()
+    sei.cbSize = ctypes.sizeof(sei)
+    sei.fMask = 0x40  # SEE_MASK_NOCLOSEPROCESS
+    sei.lpVerb, sei.lpFile, sei.lpParameters, sei.nShow = "runas", exe, args, 0
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
+    if not shell32.ShellExecuteExW(ctypes.byref(sei)):
+        err = ctypes.get_last_error()
+        return {"ok": False, "cancelled": err == 1223, "error": f"Windows error {err}"}  # 1223: the user said no
+    kernel32 = ctypes.windll.kernel32
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.WaitForSingleObject(sei.hProcess, int(timeout * 1000))
+    kernel32.CloseHandle(sei.hProcess)
+    try:
+        out = json.loads(result.read_text(encoding="utf-8"))
+        result.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        out = {"ok": False, "error": "the installation didn't finish"}
+    log("TV display driver: " + ("installed" if out.get("ok") else f"not installed ({out.get('error')})"))
+    return out
+
+
+def install_display_driver_elevated(result_path):
+    """Runs with admin rights (install_virtual_display starts it): copy the driver's files to
+    C:\\VirtualDisplayDriver (its settings are read there), create its device and install it on
+    that - what 'devcon install MttVDD.inf Root\\MttVDD' does. Writes the outcome to result_path."""
+    import ctypes
+    from ctypes import byref, sizeof, wintypes
+    out = {"steps": []}
+
+    def step(name, ok):
+        err = ctypes.get_last_error()
+        out["steps"].append(name)
+        if not ok:
+            raise RuntimeError(f"{name} failed (Windows error {err})")
+
+    try:
+        src = display_driver_files()
+        if src is None:
+            raise RuntimeError("this copy of Video Caster doesn't include the driver")
+        VDD_SETTINGS_DIR.mkdir(exist_ok=True)
+        for f in src.iterdir():
+            if f.is_file():
+                shutil.copy2(f, VDD_SETTINGS_DIR / f.name)
+        inf = str(VDD_SETTINGS_DIR / "MttVDD.inf")
+        setupapi = ctypes.WinDLL("setupapi", use_last_error=True)
+        newdev = ctypes.WinDLL("newdev", use_last_error=True)
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("d1", wintypes.DWORD), ("d2", wintypes.WORD), ("d3", wintypes.WORD), ("d4", ctypes.c_ubyte * 8)]
+
+        class SP_DEVINFO_DATA(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("ClassGuid", GUID), ("DevInst", wintypes.DWORD),
+                        ("Reserved", ctypes.c_size_t)]
+
+        HDEVINFO = ctypes.c_void_p
+        P_DEV = ctypes.POINTER(SP_DEVINFO_DATA)
+        setupapi.SetupDiGetINFClassW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(GUID), wintypes.LPWSTR,
+                                                 wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        setupapi.SetupDiCreateDeviceInfoList.restype = HDEVINFO
+        setupapi.SetupDiCreateDeviceInfoList.argtypes = [ctypes.POINTER(GUID), wintypes.HWND]
+        setupapi.SetupDiCreateDeviceInfoW.argtypes = [HDEVINFO, wintypes.LPCWSTR, ctypes.POINTER(GUID),
+                                                      wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD, P_DEV]
+        setupapi.SetupDiSetDeviceRegistryPropertyW.argtypes = [HDEVINFO, P_DEV, wintypes.DWORD, ctypes.c_void_p,
+                                                               wintypes.DWORD]
+        setupapi.SetupDiCallClassInstaller.argtypes = [wintypes.DWORD, HDEVINFO, P_DEV]
+        setupapi.SetupDiDestroyDeviceInfoList.argtypes = [HDEVINFO]
+        newdev.UpdateDriverForPlugAndPlayDevicesW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                                              wintypes.DWORD, ctypes.POINTER(wintypes.BOOL)]
+        if virtual_display() is None:  # no device yet: create it (else only the driver is updated)
+            cls, cname = GUID(), ctypes.create_unicode_buffer(256)
+            step("read the driver's device class", setupapi.SetupDiGetINFClassW(inf, byref(cls), cname, 256, None))
+            hset = setupapi.SetupDiCreateDeviceInfoList(byref(cls), None)
+            step("open a device list", hset not in (None, ctypes.c_void_p(-1).value))
+            try:
+                dev = SP_DEVINFO_DATA()
+                dev.cbSize = sizeof(SP_DEVINFO_DATA)
+                step("create the device",
+                     setupapi.SetupDiCreateDeviceInfoW(hset, cname.value, byref(cls), None, None, 1, byref(dev)))
+                ids = VDD_HWID + "\0\0"
+                buf = (ctypes.c_wchar * len(ids))(*ids)
+                step("set its hardware id",
+                     setupapi.SetupDiSetDeviceRegistryPropertyW(hset, byref(dev), 1, buf, sizeof(buf)))
+                step("register the device", setupapi.SetupDiCallClassInstaller(0x19, hset, byref(dev)))
+            finally:
+                setupapi.SetupDiDestroyDeviceInfoList(hset)
+        reboot = wintypes.BOOL()
+        step("install the driver", newdev.UpdateDriverForPlugAndPlayDevicesW(None, VDD_HWID, inf, 1, byref(reboot)))
+        out.update(ok=True, reboot=bool(reboot.value))
+    except Exception as e:
+        out.update(ok=False, error=str(e))
+    Path(result_path).write_text(json.dumps(out), encoding="utf-8")
+    return out
+
+
 SCREEN_SEG = 1  # seconds per piece of the live screen stream
 
 
@@ -2213,13 +2557,14 @@ def screen_command(encoder, audio=None, monitor=0, fps=30, height=1080):
     rolling playlist of 1-second fMP4 pieces. Live HLS is what every Cast receiver (Google TV
     included, which refuses an endless MP4) and Apple TV play for live streams."""
     qsv = encoder == "h264_qsv"
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    pre, output = _ddagrab_args(monitor)
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"] + pre
     if audio:
         fmt, rate, ch = audio
         cmd += ["-thread_queue_size", "1024", "-f", fmt, "-ar", str(rate), "-ac", str(ch), "-i", "pipe:0"]
     else:
         cmd += ["-re", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-    cmd += ["-filter_complex", f"ddagrab=output_idx={int(monitor)}:framerate={fps}:draw_mouse=1,hwdownload,"
+    cmd += ["-filter_complex", f"ddagrab=output_idx={output}:framerate={fps}:draw_mouse=1,hwdownload,"
                                f"format=bgra,scale=-2:'min({height},ih)',format={'nv12' if qsv else 'yuv420p'}[v]",
             "-map", "[v]", "-map", "0:a"]
     # about 4 Mbit/s: plenty for a desktop, and it still flows over weaker Wi-Fi
@@ -2359,8 +2704,10 @@ def mirror_video_command(encoder, monitor=0, size=(1920, 1080), kbps=MIRROR_KBPS
     every key picture (every 2 s, so a TV that lost something recovers), no B-frames."""
     qsv = encoder == "h264_qsv"
     w, h = size
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-filter_complex",
-           f"ddagrab=output_idx={int(monitor)}:framerate={fps}:draw_mouse=1,hwdownload,format=bgra,"
+    pre, output = _ddagrab_args(monitor)
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"] + pre + [
+           "-filter_complex",
+           f"ddagrab=output_idx={output}:framerate={fps}:draw_mouse=1,hwdownload,format=bgra,"
            f"scale={w}:{h},format={'nv12' if qsv else 'yuv420p'}[v]", "-map", "[v]"]
     if qsv:
         cmd += ["-c:v", "h264_qsv", "-preset", "veryfast", "-async_depth", "1"]

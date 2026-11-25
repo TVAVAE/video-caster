@@ -47,6 +47,8 @@ Source: "{#PayloadDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recurses
 ; The logo as its own file for the shortcuts: Windows caches a shortcut's icon by the file it
 ; comes from, so shortcuts that took it from VideoCaster.exe kept showing an older icon
 Source: "..\app\assets\videocaster.ico"; DestDir: "{app}"; DestName: "VideoCaster.ico"; Flags: ignoreversion
+; the Virtual Display Driver inside VideoCaster.exe (for 'Use the TV as a second display') is MIT licensed
+Source: "..\third_party\VirtualDisplayDriver\LICENSE"; DestDir: "{app}\licenses"; DestName: "VirtualDisplayDriver-LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Video Caster"; Filename: "{app}\VideoCaster.exe"; IconFilename: "{app}\VideoCaster.ico"

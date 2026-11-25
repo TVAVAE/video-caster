@@ -1281,6 +1281,8 @@ class MainWindow(QWidget):
         self.intro_busy = set()  # videos whose intro is being looked for
         self.intro_for = None    # the video whose intro countdown ran (or was cancelled)
         self.screen = None       # while the PC screen is cast: {index, sound, player, since, playing}
+        self.tv_display = None   # the TV as a second display: {name, ours (Video Caster switched it on)}
+        self.tv_display_busy = False
         self.screen_timer = QTimer(self, interval=2000, timeout=self._screen_poll)
         self.load_lock = threading.Lock()
         self.pending_seek = None
@@ -1568,6 +1570,9 @@ class MainWindow(QWidget):
         self.server.stop_transcodes()  # quick: every conversion and screen capture ends now
         if self.screen is not None and self.screen.get("mirror") is not None:
             self.screen["mirror"].close()  # (the goodbye below closes the receiver on the TV)
+        if self.tv_display is not None and self.tv_display["ours"]:
+            self._safe(be.detach_virtual_display)  # no windows left on a screen nobody sees
+            self.tv_display = None
         self.settings_panel.hide()
         self.save()
         # Saying goodbye to the TV and stopping the TV search can take long: a TV the app
@@ -2061,13 +2066,22 @@ class MainWindow(QWidget):
         head = m.addAction(f"Cast this PC's screen to {tv.name}" if tv else "Cast this PC's screen (choose a TV first)")
         head.setEnabled(False)
         screens = QGuiApplication.screens()
+        tv_rect = self._tv_display_rect()
         for i, sc in enumerate(screens):
             g, r = sc.geometry(), sc.devicePixelRatio()
-            name = "Cast my screen" if len(screens) == 1 else f"Cast screen {i + 1}"
+            name = ("Cast the TV display" if tv_rect and self._screen_rect(sc) == tv_rect else
+                    "Cast my screen" if len(screens) == 1 else f"Cast screen {i + 1}")
             act = m.addAction(f"{name}  ({round(g.width() * r)} x {round(g.height() * r)})",
                               lambda i=i: self.cast_screen(i))
             act.setCheckable(True)
             act.setChecked(self.screen is not None and self.screen["index"] == i)
+        second = m.addAction("Use the TV as a second display")
+        second.setToolTip("An extra screen to the right of this one, shown on the TV: drag windows there to put them "
+                          "on the TV.\nThe first time, Video Caster installs the free Virtual Display Driver for it "
+                          "(Windows asks for permission).")
+        second.setCheckable(True)
+        second.setChecked(self.screen is not None and self.tv_display is not None)
+        second.triggered.connect(lambda on: self.cast_tv_display() if on else self.end_screen(stop_tv=True))
         m.addSeparator()
         snd = m.addAction("With the PC's sound")
         snd.setCheckable(True)
@@ -2097,6 +2111,117 @@ class MainWindow(QWidget):
         self.save()
         if self.screen is not None:  # cast again the other way
             self.cast_screen(self.screen["index"])
+
+    # ----- the TV as a second display
+    @staticmethod
+    def _screen_rect(sc):
+        g, r = sc.geometry(), sc.devicePixelRatio()
+        return round(g.x() * r), round(g.y() * r), round(g.width() * r), round(g.height() * r)
+
+    @staticmethod
+    def _tv_display_rect():
+        """Where the TV's virtual display is on the desktop (x, y, w, h), or None when it's off."""
+        try:
+            vd = be.virtual_display()
+        except Exception:
+            return None
+        return tuple(vd["rect"]) if vd and vd["attached"] and vd["rect"] else None
+
+    def cast_tv_display(self):
+        """The TV as a second display: a virtual display to the right of this PC's screen, mirrored
+        to the TV - windows dragged there show on the TV. The first time, the bundled Virtual
+        Display Driver is installed (Windows asks for permission)."""
+        dev = self.current_device()
+        if dev is None:
+            QMessageBox.information(self, APP_NAME, "Choose a TV first: click the TV button at the top right.")
+            self.show_devices()
+            return
+        if self.connecting or self.tv_display_busy:
+            return
+        if self.conn is None or self.conn.device is not dev:  # connect first, then come back here
+            if not dev.online:
+                QMessageBox.warning(self, APP_NAME, f"{dev.name} isn't available right now. Check that it's switched on.")
+                return
+            self.connect_device(dev, then=self.cast_tv_display)
+            return
+        vd = be.virtual_display()
+        if vd is None:
+            if be.display_driver_files() is None:
+                QMessageBox.information(self, APP_NAME, "Using the TV as a second display needs the Virtual Display "
+                                        "Driver, which this copy of Video Caster doesn't include.\n\nUse the Video "
+                                        "Caster installer, or install the driver from "
+                                        "github.com/VirtualDrivers/Virtual-Display-Driver.")
+                return
+            if QMessageBox.question(
+                    self, APP_NAME, "To use the TV as a second display, Windows needs an extra screen that isn't "
+                    "really there - a virtual display - which Video Caster then shows on the TV.\n\nVideo Caster "
+                    "includes the free, open-source Virtual Display Driver for this "
+                    "(github.com/VirtualDrivers/Virtual-Display-Driver). Windows asks for permission to install it - "
+                    "only this once.\n\nInstall it now?") != QMessageBox.Yes:
+                return
+        self.tv_display_busy = True
+        self.flash("Installing the virtual display..." if vd is None else "Switching the TV display on...", 60)
+
+        def work():
+            try:
+                if vd is None:
+                    res = be.install_virtual_display()
+                    if not res.get("ok"):
+                        raise RuntimeError("" if res.get("cancelled") else res.get("error") or "unknown error")
+                    end = time.time() + 15
+                    while be.virtual_display() is None and time.time() < end:
+                        time.sleep(0.5)
+                on = be.attach_virtual_display()
+                self.bridge.call.emit(lambda: self._tv_display_on(on))
+            except Exception as e:
+                msg = str(e)
+                self.bridge.call.emit(lambda: self._tv_display_failed(msg))
+
+        worker(work)
+
+    def _tv_display_on(self, on, tries=0):
+        """Windows switched the TV display on: once Qt lists it, cast it."""
+        screens = QGuiApplication.screens()
+        rects = [self._screen_rect(sc) for sc in screens]
+        index = rects.index(tuple(on["rect"])) if tuple(on["rect"]) in rects else None
+        if index is None:  # other scaling: the virtual screen by its monitor name, or by its size
+            named = [i for i, sc in enumerate(screens) if "vdd" in sc.name().lower()]
+            sized = [i for i, rc in enumerate(rects) if rc[2:] == tuple(on["rect"][2:]) and i > 0]
+            index = (named or (sized if len(sized) == 1 else [None]))[0]
+        if index is None and tries < 24:
+            QTimer.singleShot(250, lambda: self._tv_display_on(on, tries + 1))
+            return
+        self.tv_display_busy = False
+        self.message_until = 0  # the 'Switching the TV display on...' note is done
+        if index is None:
+            if on["ours"]:
+                worker(be.detach_virtual_display)
+            QMessageBox.warning(self, APP_NAME, "Windows switched the TV display on, but it didn't show up. "
+                                                "Please try again.")
+            return
+        self.tv_display = {"name": on["name"], "ours": on["ours"]}
+        be.log(f"TV display: casting {on['name']} (screen {index + 1}) as a second display")
+        self.cast_screen(index)
+        if self.screen is not None:
+            self.screen["tv"] = True
+            self._update_header()
+        elif on["ours"]:  # casting couldn't start (e.g. no TV connection): don't leave it on
+            self._tv_display_off()
+
+    def _tv_display_failed(self, msg):
+        self.tv_display_busy = False
+        self.message_until = 0
+        if not msg:
+            self.flash("Not installed")
+            return
+        be.log(f"TV display: {msg}")
+        QMessageBox.warning(self, APP_NAME, f"Couldn't switch the TV display on.\n\n{msg}")
+
+    def _tv_display_off(self):
+        """Casting ended: switch the TV display off again if Video Caster switched it on."""
+        tvd, self.tv_display = self.tv_display, None
+        if tvd is not None and tvd["ours"]:
+            worker(be.detach_virtual_display)
 
     def cast_screen(self, index=0, allow_mirror=True):
         """Show this PC's screen (and play its sound) on the TV, live, until Stop."""
@@ -2131,17 +2256,21 @@ class MainWindow(QWidget):
         if self.screen is not None and self.screen.get("mirror") is not None:
             self.screen["mirror"].close()  # cast again (other sound/way): the new offer replaces it on the TV
         player = self.conn
+        was_tv = bool(self.screen is not None and self.screen.get("tv") and self.screen["index"] == index)
         s = self.screen = {"index": index, "sound": sound, "player": player, "since": time.time(), "playing": False,
-                           "mirror": None}
+                           "mirror": None, "tv": was_tv}
         be.log(f"casting screen {index + 1} to {dev.name} {'with' if sound else 'without'} sound")
         screens = QGuiApplication.screens()
         src = None
+        name = screens[index].name() if index < len(screens) else None  # \\.\DISPLAYn, or the monitor's name
+        rect = None
         if index < len(screens):  # the screen itself as the picture next to the title
             pm = screens[index].grabWindow(0)
             self.thumb.pix = pm.scaled(THUMB_W * 2, TOP_H * 2, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.thumb.update()
             g, r = screens[index].geometry(), screens[index].devicePixelRatio()
             src = (round(g.width() * r), round(g.height() * r))
+            rect = (round(g.x() * r), round(g.y() * r)) + src
         self.btn_screen.setIcon(draw_icon("screen", ACCENT_DARK))
         self._update_header("Starting...")
         self._update_buttons()
@@ -2150,6 +2279,11 @@ class MainWindow(QWidget):
 
         def work():
             cast = None
+            # which display to capture: Qt's and the capture's lists of displays can differ in
+            # order, and a virtual display (the TV as a second screen) has an adapter of its own
+            target = be.capture_target(name, index, rect)
+            if target != (0, index):
+                be.log(f"screen: {name} is display {target[1]} of graphics adapter {target[0]}")
             if mirror:  # Google's mirroring first: a fraction of a second behind
                 m = None
                 with self.load_lock:
@@ -2157,7 +2291,7 @@ class MainWindow(QWidget):
                         return
                     host = player.device.host or getattr(getattr(player.cast, "cast_info", None), "host", None)
                     try:
-                        m = be.ScreenMirror(player.cast, host, self.encoder, index, sound, src)
+                        m = be.ScreenMirror(player.cast, host, self.encoder, target, sound, src)
                     except Exception as e:
                         be.log(f"screen: mirroring isn't possible on {player.device.name} ({e}) - "
                                "sending the screen as a video stream instead")
@@ -2173,7 +2307,7 @@ class MainWindow(QWidget):
                     return
             try:
                 # the screen as live HLS: capturing starts now, the TV fetches the pieces
-                cast = be.ScreenCast(self.encoder, index, sound)
+                cast = be.ScreenCast(self.encoder, target, sound)
                 url = self.server.add_screen(cast)
                 stream = {"url": url, "mime": "application/x-mpegurl", "title": "PC screen", "live": True, "hls": True,
                           "screen": True}
@@ -2251,6 +2385,7 @@ class MainWindow(QWidget):
         m = s.get("mirror")
         if m is not None:
             m.close()  # quick: capturing and sending end now
+        self._tv_display_off()  # its windows move back to this PC's screen
         if stop_tv:
             p, splash = s["player"], (self.splash_url() if picture else None)
 
@@ -2259,7 +2394,7 @@ class MainWindow(QWidget):
                     if m is None:
                         self._safe(p.stop)
                     elif not splash:
-                        self._safe(m.close, quit_tv=True)  # the TV back to its home screen
+                        self._safe(lambda: m.close(quit_tv=True))  # the TV back to its home screen
                     if splash:
                         self._safe(p.show_picture, splash)  # (after mirroring: the media receiver again)
 
@@ -3051,7 +3186,8 @@ class MainWindow(QWidget):
     def _update_header(self, status=None):
         if self.screen is not None:
             s = self.screen
-            self.title.setText("Your screen" if len(QGuiApplication.screens()) == 1 else f"Screen {s['index'] + 1}")
+            self.title.setText("TV display" if s.get("tv") else "Your screen" if len(QGuiApplication.screens()) == 1
+                               else f"Screen {s['index'] + 1}")
             if status:
                 self.time.setText(status)
             elif time.time() >= self.message_until:
@@ -3189,8 +3325,15 @@ def main():
     parser.add_argument("--no-discovery", action="store_true", help="don't search the network for TVs")
     parser.add_argument("--check-device", metavar="NAME", help="check a TV connection without starting playback, then exit")
     parser.add_argument("--report", help="JSON report path for --check-device")
+    parser.add_argument("--install-display-driver", metavar="RESULT",
+                        help="(the app starts this itself, with admin rights) install the bundled virtual display "
+                             "driver for 'Use the TV as a second display', write the outcome to RESULT, exit")
     parser.add_argument("files", nargs="*", help="videos or folders to add")
     args = parser.parse_args()
+
+    if args.install_display_driver:
+        out = be.install_display_driver_elevated(args.install_display_driver)
+        sys.exit(0 if out.get("ok") else 1)
 
     if args.check_device:
         import logging

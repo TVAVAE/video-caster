@@ -1,8 +1,8 @@
-Video Caster 0.2.1 for Windows.
+Video Caster 0.3.0 for Windows.
 
 ## Downloads
 
-- **VideoCaster-Setup.exe**: recommended. Includes Python, FFmpeg, FFprobe and Chromaprint. Installs shortcuts and an uninstaller, with optional firewall rules for private local networks when installed for all users. Installing over 0.2.0 or 0.1.0 keeps your playlists, watch progress and settings.
+- **VideoCaster-Setup.exe**: recommended. Includes Python, FFmpeg, FFprobe and Chromaprint. Installs shortcuts and an uninstaller, with optional firewall rules for private local networks when installed for all users. Installing over an earlier version keeps your playlists, watch progress and settings.
 - **VideoCaster.exe**: portable app with Python included. Install FFmpeg and FFprobe separately, or place them beside the executable or in `ffmpeg\bin` next to it.
 - **SHA256SUMS.txt**: checksums for both Windows downloads.
 
@@ -10,11 +10,10 @@ Windows 10 or 11, 64-bit. Keep the PC and TV on the same network. The binaries a
 
 ## What's new
 
-- **Cast your screen with almost no delay**: on a Chromecast, Google TV or TV with Chromecast built-in, the screen now goes over Google's own screen-mirroring protocol, the one Chrome's *Cast screen* uses. The TV is a fraction of a second behind instead of several seconds, so the mouse pointer and videos from the browser follow along. *Low delay (mirroring)* in the screen button's menu switches it off. A TV that doesn't accept mirroring gets the screen as a video stream instead, automatically.
-- **The screen as a video stream plays smoothly**: when the screen is sent as a video stream (on an Apple TV, or with *Low delay* off), a Chromecast with Google TV now plays it smoothly instead of showing one picture every second or so. It stays about 6 seconds behind.
-- **4K films start reliably**: after a jump into a 4K film, the first converted picture can take longer than 30 seconds. The app used to give up at that point and switch that TV to a fallback format for good, which a Chromecast with Google TV can't play. After that, every converted video failed on that TV. The app now waits up to 90 seconds while the TV is still downloading. It undoes that wrong switch once after updating, and returns to the normal format if the fallback fails.
-- **No stray conversions after a crash**: FFmpeg conversions and screen captures now always end with the app, even when it's closed by force.
+- **Use the TV as a second display**: a new option in the screen button's menu adds an extra screen to the right of yours and shows it on the TV. Drag a window onto it to put it on the TV, and keep working on your own screen. The extra screen is there only while it's cast: when you stop, its windows come back to your screen. Windows needs a virtual display for this. Video Caster includes the free, open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT license) and installs it the first time you use the option, after asking you; Windows then asks for admin permission, just once.
+- **The right screen is cast** on PCs with more than one display, also when Windows lists the displays in a different order than Video Caster does.
+- **Fix**: stopping a mirrored screen without the app's picture coming back now also closes the mirroring on the TV.
 
-Screen mirroring was measured on a Chromecast with Google TV (HD): at the 200 ms delay the app uses, every picture and sound frame was played on time. The version built into the app was checked on the PC against a stand-in receiver. It hasn't been tried yet on a TV with Chromecast built-in. Playback on a physical Apple TV is still untested.
+Screen mirroring has now been used on a Chromecast with Google TV and on a Philips Android TV with Chromecast built-in: every picture played on time, also in a 12-minute session. The second display was checked on the PC: switching it on and off, casting it, and installing the driver through the app. It was also cast to the Philips TV, using the same virtual display set up by hand. Playback on a physical Apple TV is still untested.
 
-The installer contains the Gyan FFmpeg 9.1 full build. Its GPLv3 license, build configuration, and upstream source reference are included under `ffmpeg` in the installation directory. See the [FFmpeg build provider](https://www.gyan.dev/ffmpeg/builds/) and [corresponding FFmpeg source commit](https://github.com/FFmpeg/FFmpeg/commit/74e4393595).
+The installer contains the Gyan FFmpeg 9.1 full build. Its GPLv3 license, build configuration, and upstream source reference are included under `ffmpeg` in the installation directory. See the [FFmpeg build provider](https://www.gyan.dev/ffmpeg/builds/) and [corresponding FFmpeg source commit](https://github.com/FFmpeg/FFmpeg/commit/74e4393595). The Virtual Display Driver's license is installed as `licenses\VirtualDisplayDriver-LICENSE.txt`.
