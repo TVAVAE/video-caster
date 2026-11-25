@@ -21,17 +21,20 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing, with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.2.0
+## What's new in 0.2.1
 
-- **Cast your screen**: a new button puts your whole PC screen on the TV, live, with the PC's
-  sound - see [Cast your screen](#cast-your-screen).
-- **A logo of its own**: for the app, its taskbar button, the shortcuts and the installer.
-- **Closing never freezes**, also when a TV the app knows doesn't answer (switched off, or the
-  PC is on another network).
-- **The window always opens on your screen**, also after a second monitor was unplugged.
-- **The cache cleans itself**: leftovers of videos closed mid-way are removed when the app starts.
+- **Cast your screen with almost no delay**: on a Chromecast or Google TV the screen now goes
+  over Google's own screen mirroring (as Chrome's *Cast screen* does), a fraction of a second
+  behind instead of several seconds - see [Cast your screen](#cast-your-screen).
+- **The screen as a video stream plays smoothly** on Google TV (Apple TV, or with *Low delay*
+  off), instead of one picture every second or so.
+- **4K films start reliably**: a slow first conversion no longer switches the TV to a fallback
+  format it can't play.
+- **No stray conversions after a crash**: FFmpeg always ends with the app.
 
-Earlier versions and downloads: [releases](https://github.com/TVAVAE/video-caster/releases).
+0.2.0 added *Cast your screen*, the logo, a window that always opens on screen, closing without
+freezing and a cache that cleans itself. Earlier versions and downloads:
+[releases](https://github.com/TVAVAE/video-caster/releases).
 
 ## Features
 
@@ -75,8 +78,9 @@ Earlier versions and downloads: [releases](https://github.com/TVAVAE/video-caste
 
 **Your screen**
 - **Cast your screen**: the screen button shows your whole PC screen (mouse pointer included)
-  on the TV, live, with the PC's sound. Handy for a website, photos or a presentation. The TV
-  shows it a few seconds late, so it's not for games. No extra software needed.
+  on the TV, live, with the PC's sound. On a Chromecast or Google TV it uses Google's own screen
+  mirroring and is a fraction of a second behind; on an Apple TV it's a few seconds behind.
+  No extra software needed.
 
 **TVs**
 - Chromecast, Google TV and TVs with Chromecast built-in - found automatically on your network.
@@ -186,21 +190,26 @@ arrow, next to the gear) and choose *Cast my screen* - or one of your screens if
 If no TV is chosen yet, the app asks for one first.
 
 <p align="center">
-  <img src="docs/screen-menu.png" alt="The screen button's menu: Cast this PC's screen to Living Room TV, Cast my screen (1920 x 1200), With the PC's sound" width="256">
+  <img src="docs/screen-menu.png" alt="The screen button's menu: Cast this PC's screen to Living Room TV, Cast my screen (1920 x 1200), With the PC's sound, Low delay (mirroring)" width="256">
 </p>
 
-- The window shows *Your screen - Casting to ... with sound*; only *Stop* is used meanwhile.
-  *Stop*, stopping with the TV remote, or playing a video ends it.
-- *With the PC's sound* (in the same menu) switches the sound on or off; changing it while
-  casting starts again with the new choice.
+- The window shows *Your screen - Mirroring to ... with sound* (or *Casting to ...*, see below);
+  only *Stop* is used meanwhile. *Stop*, stopping with the TV remote, or playing a video ends it.
+- **Low delay (mirroring)** (on by default): on a Chromecast, Google TV or TV with Chromecast
+  built-in, the app uses Google's own screen mirroring - the protocol Chrome's *Cast screen*
+  uses. The TV plays the screen about 0.2 seconds after it happens on the PC, so the mouse
+  pointer and videos from the browser follow along.
+- Without it - on an Apple TV, with *Low delay* off, or on a TV that doesn't accept mirroring
+  (the app then switches over by itself) - the screen goes as a video stream, which the TV
+  plays about 6 seconds late: fine for a website, photos or a presentation.
+- *With the PC's sound* (in the same menu) switches the sound on or off; changing either option
+  while casting starts again with the new choice.
 - The sound is recorded as Windows plays it, so the PC must **not be muted** - the app warns you
-  if it is. A low volume is fine: the TV still gets the sound at full strength, and you don't
-  hear the PC and the TV a few seconds apart.
-- The TV shows the screen a few seconds late: fine for a website, photos, a presentation or a
-  video playing in the browser, not for games.
+  if it is. A low volume is fine: the TV still gets the sound at full strength.
 - No extra software is needed: the screen is captured with Windows' Desktop Duplication (via
-  FFmpeg, on the graphics chip when the PC has one) and the sound with Windows' own audio
-  loopback. Your screen goes only to the TV you picked, and only while casting.
+  FFmpeg, encoded on the graphics chip when the PC has one) and the sound with Windows' own
+  audio loopback. Your screen goes only to the TV you picked, and only while casting; mirroring
+  is encrypted, as the protocol requires.
 
 ### Keyboard
 
@@ -254,7 +263,7 @@ your own API key.
 | Path | What |
 | --- | --- |
 | `app/main.py` | The window (PySide6 / Qt) |
-| `app/backend.py` | The engine: finding TVs, the media server, deciding how to play each file, FFmpeg, HLS, subtitles, credits and intro detection, OpenSubtitles, casting the screen |
+| `app/backend.py` | The engine: finding TVs, the media server, deciding how to play each file, FFmpeg, HLS, subtitles, credits and intro detection, OpenSubtitles, casting and mirroring the screen |
 | `app/assets/` | The logo: `videocaster.ico` (exe, installer, shortcuts) and the window and taskbar icons |
 | `tools/make_icon.py` | Draws the logo - change it there and run `python tools\make_icon.py` |
 | `app/state.json` | Your playlists, settings and watch progress (created on first run) |
@@ -280,6 +289,11 @@ instead of `app/`.
 - **No sound with Passthrough** - your TV or soundbar doesn't take Dolby; choose *Stereo Downmix*.
 - **No sound when casting the screen** - unmute the PC (a low volume is enough), and check that
   *With the PC's sound* is ticked in the screen button's menu.
+- **The screen on the TV is seconds behind** - check that *Low delay (mirroring)* is ticked in
+  the screen button's menu (Chromecast and Google TV only). If the window says *Casting to*
+  rather than *Mirroring to*, the TV didn't accept mirroring; the log says why.
+- **Mirroring stutters or freezes** - untick *Low delay (mirroring)*: the video stream is
+  further behind but copes better with weak Wi-Fi.
 - **Playback stutters** - run the *Speed Test*, or set *Quality* lower. On a weak connection the
   app switches to adaptive streaming by itself.
 - **The window doesn't appear** - it opens where it was last closed; since 0.2.0 it moves back
@@ -345,7 +359,7 @@ containing `bin` and `LICENSE`, and at Inno Setup's `ISCC.exe` (winget installs 
 
 This builds the app and **`dist\VideoCaster-Setup.exe`**. Use `-SkipAppBuild` to package
 an already built `dist\VideoCaster.exe`, or `-Version "0.2.1"` to set the installer
-version (the default is the current release, 0.2.0). The exe, installer and shortcut icons
+version (the default is the current release, 0.2.1). The exe, installer and shortcut icons
 come from `app/assets/videocaster.ico`. `installer/VideoCaster.iss` defines installation, shortcuts, optional private
 network firewall rules, and uninstall. FFmpeg's license and build information are
 installed with it. Downloaded tools and staged payloads are not committed to Git.

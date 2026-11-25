@@ -274,10 +274,11 @@ def load_state(path):
                          ("global", {}), ("known_devices", []), ("device_id", None), ("playlist_visible", True)):
         st.setdefault(key, default)
     st["current_playlist"] = max(0, min(st["current_playlist"], len(st["playlists"]) - 1))
-    if not st.get("hls_failed_v2"):
-        # older versions also gave up HLS when a weak connection made it stall; forget those
+    if not st.get("hls_failed_v3"):
+        # older versions also gave up HLS when a weak connection made it stall, or when a heavy
+        # (4K) conversion was slow to start; forget those marks
         st["hls_failed"] = []
-        st["hls_failed_v2"] = True
+        st["hls_failed_v2"] = st["hls_failed_v3"] = True
     st["global"] = {**be.GLOBAL_DEFAULTS, **st["global"]}
     return st
 
@@ -1565,6 +1566,8 @@ class MainWindow(QWidget):
         self.preparer.cancel()  # don't leave ffmpeg running after the app closes
         self.screen_timer.stop()
         self.server.stop_transcodes()  # quick: every conversion and screen capture ends now
+        if self.screen is not None and self.screen.get("mirror") is not None:
+            self.screen["mirror"].close()  # (the goodbye below closes the receiver on the TV)
         self.settings_panel.hide()
         self.save()
         # Saying goodbye to the TV and stopping the TV search can take long: a TV the app
@@ -2070,6 +2073,14 @@ class MainWindow(QWidget):
         snd.setCheckable(True)
         snd.setChecked(bool(self.state["global"].get("screen_sound", True)))
         snd.toggled.connect(self._set_screen_sound)
+        low = m.addAction("Low delay (mirroring)")
+        low.setToolTip("Google's own screen mirroring, as Chrome's 'Cast screen' uses: the TV is a fraction of a "
+                       "second behind.\nOff: the screen as a video stream, a few seconds behind (for TVs that "
+                       "don't take mirroring).")
+        low.setCheckable(True)
+        low.setChecked(bool(self.state["global"].get("screen_mirror", True)))
+        low.setEnabled(tv is None or tv.kind == "chromecast")
+        low.toggled.connect(self._set_screen_mirror)
         if self.screen is not None:
             m.addSeparator()
             m.addAction("Stop casting the screen", lambda: self.end_screen(stop_tv=True))
@@ -2081,7 +2092,13 @@ class MainWindow(QWidget):
         if self.screen is not None:  # cast again, now with (or without) the sound
             self.cast_screen(self.screen["index"])
 
-    def cast_screen(self, index=0):
+    def _set_screen_mirror(self, on):
+        self.state["global"]["screen_mirror"] = bool(on)
+        self.save()
+        if self.screen is not None:  # cast again the other way
+            self.cast_screen(self.screen["index"])
+
+    def cast_screen(self, index=0, allow_mirror=True):
         """Show this PC's screen (and play its sound) on the TV, live, until Stop."""
         dev = self.current_device()
         if dev is None:
@@ -2111,29 +2128,66 @@ class MainWindow(QWidget):
         self.gen += 1
         gen = self.gen
         self.server.stop_transcodes()
+        if self.screen is not None and self.screen.get("mirror") is not None:
+            self.screen["mirror"].close()  # cast again (other sound/way): the new offer replaces it on the TV
         player = self.conn
-        url = self.server.register("screen", "screen", name="screen.mp4", sound=sound, monitor=index,
-                                   encoder=self.encoder)
-        stream = {"url": url, "mime": "video/mp4", "title": "PC screen", "live": True}
-        self.screen = {"index": index, "sound": sound, "player": player, "since": time.time(), "playing": False}
+        s = self.screen = {"index": index, "sound": sound, "player": player, "since": time.time(), "playing": False,
+                           "mirror": None}
         be.log(f"casting screen {index + 1} to {dev.name} {'with' if sound else 'without'} sound")
         screens = QGuiApplication.screens()
+        src = None
         if index < len(screens):  # the screen itself as the picture next to the title
             pm = screens[index].grabWindow(0)
             self.thumb.pix = pm.scaled(THUMB_W * 2, TOP_H * 2, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.thumb.update()
+            g, r = screens[index].geometry(), screens[index].devicePixelRatio()
+            src = (round(g.width() * r), round(g.height() * r))
         self.btn_screen.setIcon(draw_icon("screen", ACCENT_DARK))
         self._update_header("Starting...")
         self._update_buttons()
+        mirror = (allow_mirror and bool(self.state["global"].get("screen_mirror", True))
+                  and getattr(player, "kind", "") == "chromecast" and getattr(player, "cast", None) is not None)
 
         def work():
-            try:
+            cast = None
+            if mirror:  # Google's mirroring first: a fraction of a second behind
+                m = None
                 with self.load_lock:
                     if gen != self.gen:
+                        return
+                    host = player.device.host or getattr(getattr(player.cast, "cast_info", None), "host", None)
+                    try:
+                        m = be.ScreenMirror(player.cast, host, self.encoder, index, sound, src)
+                    except Exception as e:
+                        be.log(f"screen: mirroring isn't possible on {player.device.name} ({e}) - "
+                               "sending the screen as a video stream instead")
+                if m is not None:
+                    s["mirror"] = m
+                    if gen != self.gen or self.screen is not s:
+                        m.close()
+                        return
+                    be.log(f"screen: mirroring to {player.device.name} at {m.size[0]}x{m.size[1]}, "
+                           f"{be.MIRROR_DELAY_MS} ms behind" + ("" if m.with_sound or not sound else
+                                                                ", without sound (it can't be recorded)"))
+                    self.bridge.call.emit(lambda: self._update_header() if self.screen is s else None)
+                    return
+            try:
+                # the screen as live HLS: capturing starts now, the TV fetches the pieces
+                cast = be.ScreenCast(self.encoder, index, sound)
+                url = self.server.add_screen(cast)
+                stream = {"url": url, "mime": "application/x-mpegurl", "title": "PC screen", "live": True, "hls": True,
+                          "screen": True}
+                if sound and not cast.with_sound:
+                    be.log("screen: the PC's sound can't be recorded - casting without it")
+                with self.load_lock:
+                    if gen != self.gen:
+                        cast.close()
                         return
                     player.connect()
                     player.load(stream, 0)
             except Exception as e:
+                if cast is not None:
+                    cast.close()
                 msg = str(e) or e.__class__.__name__
                 self.bridge.call.emit(lambda: self.end_screen(stop_tv=False, why=f"Couldn't cast the screen: {msg}")
                                       if gen == self.gen else None)
@@ -2147,7 +2201,10 @@ class MainWindow(QWidget):
         if s is None:
             self.screen_timer.stop()
             return
-        p = s["player"]
+        p, m = s["player"], s.get("mirror")
+        if m is not None:  # mirroring: the TV's own reports say whether it plays
+            self._screen_state(s, {"playing": "playing", "starting": "loading"}.get(m.state(), "mirror stopped"))
+            return
 
         def work():
             try:
@@ -2162,6 +2219,16 @@ class MainWindow(QWidget):
 
     def _screen_state(self, s, st):
         if s is not self.screen:
+            return
+        if st == "mirror stopped":
+            why = s["mirror"].why or be.ScreenMirror.STOPPED_TV
+            if not s["playing"] and why != be.ScreenMirror.STOPPED_TV:
+                be.log(f"screen: mirroring didn't start on {s['player'].device.name} ({why}) - "
+                       "sending the screen as a video stream instead")
+                self.cast_screen(s["index"], allow_mirror=False)
+                return
+            # stopped on the TV: leave it be; else (TV silent, capture ended) close the receiver there
+            self.end_screen(stop_tv=why != be.ScreenMirror.STOPPED_TV, why=why)
             return
         if st in ("playing", "buffering", "paused"):
             if not s["playing"] and st == "playing":
@@ -2181,14 +2248,20 @@ class MainWindow(QWidget):
         self.screen_timer.stop()
         self.gen += 1
         self.server.stop_transcodes()
+        m = s.get("mirror")
+        if m is not None:
+            m.close()  # quick: capturing and sending end now
         if stop_tv:
             p, splash = s["player"], (self.splash_url() if picture else None)
 
             def work():
                 with self.load_lock:
-                    self._safe(p.stop)
+                    if m is None:
+                        self._safe(p.stop)
+                    elif not splash:
+                        self._safe(m.close, quit_tv=True)  # the TV back to its home screen
                     if splash:
-                        self._safe(p.show_picture, splash)
+                        self._safe(p.show_picture, splash)  # (after mirroring: the media receiver again)
 
             worker(work)
         be.log("screen casting ended" + (f": {why}" if why else ""))
@@ -2879,7 +2952,15 @@ class MainWindow(QWidget):
             return
         if (self.stream and self.stream.get("hls") and not self.seen_playing and self.pending_seek is None
                 and (st == "error" or time.time() > getattr(self, "hls_deadline", time.time() + 1))):
-            self._hls_fallback("no picture within 30 s" if st != "error" else "the TV reported an error")
+            fetched = bool(((self.stream or {}).get("stats") or {}).get("first"))
+            if st != "error" and fetched and time.time() - self.load_time < 90:
+                # the TV is fetching pieces: HLS works, the conversion is just slow to start
+                # (a 4K video after a jump, say) - keep waiting rather than give HLS up
+                self.hls_deadline = time.time() + 10
+                self._update_header("Converting - the first pieces take a while...")
+                return
+            self._hls_fallback("the TV reported an error" if st == "error" else
+                               "no picture within 90 s" if fetched else "the TV fetched nothing within 30 s")
             return
         if st == "loading" or self.pending_seek is not None:  # TV hasn't reported on this stream yet
             self._update_header()
@@ -2937,6 +3018,18 @@ class MainWindow(QWidget):
         elif st == "error":
             path = self.now_path
             be.log(f"TV reported an error for {Path(path).name if path else '?'} at {self.position:.0f}s")
+            dev = self.current_device()
+            retried = self.__dict__.setdefault("hls_retried", set())
+            if (self.stream and not self.stream.get("hls") and dev is not None and dev.id not in retried
+                    and dev.id in self.state.get("hls_failed", [])):
+                # the live stream (used since HLS once seemed not to work here) fails too: that mark
+                # was wrong - forget it and try HLS again, once
+                retried.add(dev.id)
+                self.state["hls_failed"] = [d for d in self.state["hls_failed"] if d != dev.id]
+                self.save()
+                be.log(f"the live stream doesn't work on {dev.name} either - trying HLS again")
+                self._start(path, self.position, status="Trying another way of streaming...")
+                return
             self.stop(keep_header=True)
             QMessageBox.warning(self, APP_NAME,
                                 f"The TV couldn't play {Path(path).name if path else 'this video'}.\n\n"
@@ -2962,7 +3055,7 @@ class MainWindow(QWidget):
             if status:
                 self.time.setText(status)
             elif time.time() >= self.message_until:
-                self.time.setText(f"Casting to {s['player'].device.name}"
+                self.time.setText(f"{'Mirroring' if s.get('mirror') else 'Casting'} to {s['player'].device.name}"
                                   + (" with sound" if s["sound"] else " without sound")
                                   + ("" if s["playing"] else " - starting..."))
             self.seek.duration = 0

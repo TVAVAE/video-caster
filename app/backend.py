@@ -12,6 +12,7 @@ import json
 import math
 import mimetypes
 import os
+import random
 import re
 import shutil
 import socket
@@ -59,6 +60,52 @@ CACHE_DIR = DATA_DIR / "cache"
 # Keeps ffmpeg/ffprobe from flashing a console window on Windows.
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+_JOB = None
+_JOB_LOCK = threading.Lock()
+
+
+def adopt(proc):
+    """Tie a child process (ffmpeg) to this app: Windows ends it the moment the app process
+    goes away, however it ends - a crash or a forced close included. Without this a screen
+    capture or conversion could keep running unseen. Returns proc."""
+    global _JOB
+    if sys.platform != "win32" or proc is None:
+        return proc
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        with _JOB_LOCK:
+            if _JOB is None:
+                class IoCounters(ctypes.Structure):
+                    _fields_ = [(n, ctypes.c_ulonglong) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+                class Basic(ctypes.Structure):
+                    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong), ("PerJobUserTimeLimit", ctypes.c_longlong),
+                                ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                                ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                                ("SchedulingClass", wintypes.DWORD)]
+
+                class Extended(ctypes.Structure):
+                    _fields_ = [("Basic", Basic), ("Io", IoCounters), ("ProcessMemoryLimit", ctypes.c_size_t),
+                                ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                                ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+                k32.CreateJobObjectW.restype = wintypes.HANDLE
+                job = k32.CreateJobObjectW(None, None)
+                info = Extended()
+                info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+                if not job or not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+                    return proc  # 9: JobObjectExtendedLimitInformation
+                _JOB = job
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k32.AssignProcessToJobObject(_JOB, int(proc._handle))
+    except Exception:
+        pass
+    return proc
+
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".m4v", ".webm", ".mpg", ".mpeg", ".ts", ".m2ts", ".flv", ".3gp"}
 SUB_EXTS = {".srt", ".vtt"}
 
@@ -99,6 +146,7 @@ GLOBAL_DEFAULTS = {
     "up_next": True,           # at the end credits: count down and play the next episode
     "skip_intro": True,        # a series' opening titles (found by comparing episodes): skipped
     "screen_sound": True,      # casting the PC screen: with the PC's sound
+    "screen_mirror": True,     # ...to a Chromecast: Google's mirroring (well under a second behind)
     "sub_font": "Sans-serif",  # subtitle font and style: for all videos
     "sub_font_style": "Normal",
 }
@@ -1529,9 +1577,10 @@ class HlsJob:
         (self.dir / "p0").mkdir(exist_ok=True)
         entry = dict(self.extra, plan=self.plan, path=self.path, start=0.0)
         try:
-            self.side = subprocess.Popen(ffmpeg_command(entry, hls={"rel": f"{self.rel}/p0", "k": 0, "t": HLS_SEG + 0.2}),
-                                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                         stderr=subprocess.DEVNULL, cwd=str(CACHE_DIR), creationflags=NO_WINDOW)
+            self.side = adopt(subprocess.Popen(ffmpeg_command(entry, hls={"rel": f"{self.rel}/p0", "k": 0,
+                                                                          "t": HLS_SEG + 0.2}),
+                                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL, cwd=str(CACHE_DIR), creationflags=NO_WINDOW))
         except OSError:
             self.side = None
 
@@ -1586,9 +1635,9 @@ class HlsJob:
         self.last_req = k
         entry = dict(self.extra, plan=self.plan, path=self.path, start=k * HLS_SEG)
         try:
-            self.proc = subprocess.Popen(ffmpeg_command(entry, hls={"rel": self.rel, "k": k}),
-                                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                         cwd=str(CACHE_DIR), creationflags=NO_WINDOW)
+            self.proc = adopt(subprocess.Popen(ffmpeg_command(entry, hls={"rel": self.rel, "k": k}),
+                                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL, cwd=str(CACHE_DIR), creationflags=NO_WINDOW))
             self.first = k
         except OSError:
             self.proc = None
@@ -1868,8 +1917,9 @@ class Preparer:
             cmd = ffmpeg_command(entry, to_file=tmp)
             cmd[1:1] = ["-y", "-progress", "pipe:1", "-nostats"]
             try:
-                proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                        cwd=str(CACHE_DIR), creationflags=NO_WINDOW | BELOW_NORMAL)
+                proc = adopt(subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                              stderr=subprocess.DEVNULL, cwd=str(CACHE_DIR),
+                                              creationflags=NO_WINDOW | BELOW_NORMAL))
             except OSError:
                 return key
             self.proc, self.key, self.progress = proc, key, 0.0
@@ -2153,11 +2203,15 @@ class LoopbackAudio:
                 ctypes.windll.ole32.CoTaskMemFree(pwfx)
 
 
+SCREEN_SEG = 1  # seconds per piece of the live screen stream
+
+
 def screen_command(encoder, audio=None, monitor=0, fps=30, height=1080):
     """ffmpeg arguments that capture a screen (Windows' Desktop Duplication, mouse pointer
     included) plus the PC's sound from stdin (audio=(format, rate, channels); silence
-    without it), and send it as a live MP4 to stdout - small fragments, no B-frames, so the
-    TV gets it with as little delay as it allows."""
+    without it), and write it as live HLS into the current folder: index.m3u8, a short
+    rolling playlist of 1-second fMP4 pieces. Live HLS is what every Cast receiver (Google TV
+    included, which refuses an endless MP4) and Apple TV play for live streams."""
     qsv = encoder == "h264_qsv"
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
     if audio:
@@ -2168,16 +2222,575 @@ def screen_command(encoder, audio=None, monitor=0, fps=30, height=1080):
     cmd += ["-filter_complex", f"ddagrab=output_idx={int(monitor)}:framerate={fps}:draw_mouse=1,hwdownload,"
                                f"format=bgra,scale=-2:'min({height},ih)',format={'nv12' if qsv else 'yuv420p'}[v]",
             "-map", "[v]", "-map", "0:a"]
+    # about 4 Mbit/s: plenty for a desktop, and it still flows over weaker Wi-Fi
     if qsv:
-        cmd += ["-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", "6000k", "-maxrate", "8000k", "-bufsize", "4000k",
+        cmd += ["-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", "4000k", "-maxrate", "6000k", "-bufsize", "6000k",
                 "-bf", "0", "-async_depth", "1"]
     else:
-        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-crf", "23", "-maxrate", "8000k",
-                "-bufsize", "4000k"]
-    cmd += ["-g", str(fps), "-profile:v", "high", "-c:a", "aac", "-b:a", "160k", "-ac", "2",
-            "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-frag_duration", "250000",
-            "-flush_packets", "1", "pipe:1"]
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-crf", "24", "-maxrate", "6000k",
+                "-bufsize", "6000k"]
+    # a keyframe every second (the capture runs at a steady frame rate); -force_key_frames
+    # can't be used: with the capture's timestamps it stops the pieces from being written.
+    # 12 pieces in the playlist: the TV plays about 6 s behind, well inside that window.
+    cmd += ["-g", str(fps * SCREEN_SEG), "-profile:v", "high", "-c:a", "aac", "-b:a", "160k", "-ac", "2",
+            "-f", "hls", "-hls_time", str(SCREEN_SEG), "-hls_list_size", "12", "-hls_delete_threshold", "12",
+            "-hls_flags", "delete_segments+independent_segments+temp_file",
+            "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
+            "-hls_segment_filename", "seg_%d.m4s", "index.m3u8"]
     return cmd
+
+
+class ScreenCast:
+    """The PC screen as a live HLS stream, captured from the moment casting starts: ffmpeg
+    writes 1-second pieces into a folder of its own and the media server hands them out.
+    Ends by itself when the TV stops asking for a minute (stopped on the TV)."""
+
+    NAMES = re.compile(r"^(index\.m3u8|init\.mp4|seg_\d+\.m4s)$")
+
+    def __init__(self, encoder="libx264", monitor=0, sound=True):
+        self.dir = CACHE_DIR / f"screen_{uuid.uuid4().hex[:8]}"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.sound = LoopbackAudio() if sound else None
+        fmt = self.sound.start() if self.sound else None
+        if self.sound is not None and fmt is None:
+            self.sound.stop()
+            self.sound = None  # no speakers to record: send silence
+        self.with_sound = fmt is not None
+        self.closed = False
+        self.last_request = time.time()
+        self.started = time.time()
+        self._fetched = []  # (time, how old the piece was) for each piece the TV fetched
+        self._reported = time.time()
+        self.proc = adopt(subprocess.Popen(screen_command(encoder, fmt, monitor), stdin=subprocess.PIPE if fmt else
+                                           subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                           cwd=str(self.dir), creationflags=NO_WINDOW))
+        if self.sound is not None:
+            self.sound.attach(self.proc.stdin)
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def running(self):
+        return not self.closed and self.proc.poll() is None
+
+    def file(self, name, timeout=15.0):
+        """One file of the stream, waiting for it if the TV asks before ffmpeg wrote it
+        (the playlist exists about two seconds after the start); None if it doesn't come."""
+        if not self.NAMES.match(name or ""):
+            return None
+        self.last_request = time.time()
+        path = self.dir / name
+        end = time.time() + timeout
+        while not path.exists() and time.time() < end and self.running():
+            time.sleep(0.1)
+        if not path.exists():
+            return None
+        if name.startswith("seg_"):
+            self._note_fetch(path)
+        return path
+
+    def _note_fetch(self, path):
+        """Every 30 s, log how the TV keeps up: pieces fetched (one a second when it plays
+        smoothly) and how far behind the capture it is - for when it plays jerkily."""
+        now = time.time()
+        try:
+            self._fetched.append((now, now - path.stat().st_mtime))
+        except OSError:
+            return
+        if now - self._reported >= 30:
+            recent = [age for t, age in self._fetched if t > self._reported]
+            span = now - self._reported
+            self._reported = now
+            self._fetched = self._fetched[-100:]
+            if recent:
+                log(f"screen: the TV fetched {len(recent)} pieces in {span:.0f} s (smooth = about {span:.0f}); "
+                    f"they were {sum(recent) / len(recent):.1f} s old on average")
+
+    def _watch(self):
+        while not self.closed:
+            time.sleep(1)
+            if time.time() - self.last_request > 60 or self.proc.poll() is not None:
+                self.close()
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.sound is not None:
+            self.sound.stop()
+        try:
+            self.proc.kill()
+            self.proc.wait(timeout=5)
+        except Exception:
+            pass
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- screen mirroring
+
+MIRROR_APP = "0F5096E8"  # Google's mirroring receiver: what Chrome's "Cast screen" talks to
+MIRROR_NS = "urn:x-cast:com.google.cast.webrtc"
+MIRROR_DELAY_MS = 200  # how far behind the TV plays: pieces arrive in ~10 ms, a resend in ~50 ms
+MIRROR_KBPS = 5000
+MIRROR_FPS = 30
+_MIRROR_PT = {"audio": 127, "video": 96}  # Chrome's classic numbers; Android TV receivers expect these
+_MIRROR_PAYLOAD = 1472 - 23  # UDP payload on Ethernet/Wi-Fi minus the largest RTP + Cast header
+_MIRROR_VIDEO_LAG = 0.04  # a picture takes about this much longer than the sound to come out encoded
+
+
+class MirrorError(Exception):
+    """The TV can't mirror the screen (no mirroring receiver there, or it refused the offer)."""
+
+
+def _ntp64(t):
+    sec = int(t)
+    return ((sec + 2208988800) & 0xFFFFFFFF) << 32 | (int((t - sec) * (1 << 32)) & 0xFFFFFFFF)
+
+
+def mirror_size(src=None, height=1080):
+    """The picture size sent to the TV for a screen of src=(width, height) pixels: at most
+    `height` lines (1080 also suits the HD Chromecasts' decoders), even numbers, same shape."""
+    sw, sh = src or (1920, 1080)
+    h = min(height, sh) // 2 * 2
+    return max(2, int(round(sw * h / sh / 2)) * 2), h
+
+
+def mirror_video_command(encoder, monitor=0, size=(1920, 1080), kbps=MIRROR_KBPS, fps=MIRROR_FPS):
+    """ffmpeg arguments: the screen (Desktop Duplication, mouse pointer included) as raw H.264 on
+    stdout, one access-unit delimiter before every picture, the stream headers repeated before
+    every key picture (every 2 s, so a TV that lost something recovers), no B-frames."""
+    qsv = encoder == "h264_qsv"
+    w, h = size
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-filter_complex",
+           f"ddagrab=output_idx={int(monitor)}:framerate={fps}:draw_mouse=1,hwdownload,format=bgra,"
+           f"scale={w}:{h},format={'nv12' if qsv else 'yuv420p'}[v]", "-map", "[v]"]
+    if qsv:
+        cmd += ["-c:v", "h264_qsv", "-preset", "veryfast", "-async_depth", "1"]
+    else:
+        cmd += ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency"]
+    cmd += ["-profile:v", "main", "-b:v", f"{kbps}k", "-maxrate", f"{kbps}k", "-bufsize", f"{kbps // 2}k",
+            "-bf", "0", "-g", str(fps * 2), "-bsf:v", "dump_extra=freq=keyframe,h264_metadata=aud=insert",
+            "-f", "h264", "pipe:1"]
+    return cmd
+
+
+def mirror_audio_command(fmt):
+    """ffmpeg arguments: the PC's sound (raw samples on stdin, fmt=(format, rate, channels)) as
+    Opus in 10 ms packets, in Ogg pages flushed at once on stdout."""
+    sfmt, rate, ch = fmt
+    return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", sfmt, "-ar", str(rate), "-ac", str(ch),
+            "-i", "pipe:0", "-ac", "2", "-ar", "48000", "-c:a", "libopus", "-b:a", "128k", "-application", "lowdelay",
+            "-frame_duration", "10", "-f", "ogg", "-page_duration", "10000", "-flush_packets", "1", "pipe:1"]
+
+
+def _nal_types(au):
+    out, i = [], au.find(b"\x00\x00\x01")
+    while i >= 0:
+        if i + 3 < len(au):
+            out.append(au[i + 3] & 0x1F)
+        i = au.find(b"\x00\x00\x01", i + 3)
+    return out
+
+
+def h264_pictures(stream, on_picture, stop, fps=MIRROR_FPS):
+    """Cut raw H.264 (as mirror_video_command writes it) into pictures at the access-unit
+    delimiters, and call on_picture(data, time, is_key) with steady, rising timestamps."""
+    buf, idx, anchor, prev = b"", 0, None, 0.0
+    while not stop.is_set():
+        chunk = stream.read1(1 << 16)
+        if not chunk:
+            break
+        buf += chunk
+        while True:
+            i = buf.find(b"\x00\x00\x01\x09", 5)  # the next picture's delimiter (past this one's)
+            if i < 0:
+                break
+            if buf[i - 1] == 0:
+                i -= 1
+            au, buf = buf[:i], buf[i:]
+            now = time.time() - _MIRROR_VIDEO_LAG
+            if anchor is None or abs(now - (anchor + idx / fps)) > 0.1:
+                anchor = now - idx / fps  # the encoder fell behind, or came in a burst
+            prev = max(anchor + idx / fps, prev + 0.002)
+            on_picture(au, prev, 5 in _nal_types(au))
+            idx += 1
+
+
+def ogg_packets(stream, on_packet, stop, packet_secs=0.01):
+    """The Opus packets in an Ogg stream (skipping its two header packets): on_packet(data, time)."""
+    pending, n, t0, prev = b"", 0, None, 0.0
+    while not stop.is_set():
+        head = stream.read(27)
+        if len(head) < 27 or head[:4] != b"OggS":
+            break
+        lacing = stream.read(head[26])
+        data = stream.read(sum(lacing))
+        pos = 0
+        for size in lacing:
+            pending += data[pos:pos + size]
+            pos += size
+            if size == 255:
+                continue  # the packet goes on in the next segment
+            n += 1
+            if n > 2:
+                k = n - 3
+                now = time.time()
+                if t0 is None or abs(now - (t0 + k * packet_secs)) > 0.2:
+                    t0 = now - k * packet_secs
+                prev = max(t0 + k * packet_secs, prev + 0.001)
+                on_packet(pending, prev)
+            pending = b""
+
+
+class _MirrorStream:
+    """One stream of a mirroring session (picture or sound): numbered frames, each encrypted
+    (AES-128-CTR) and cut into RTP packets with the Cast header; what the TV misses is sent again."""
+
+    def __init__(self, kind, sock, addr, ssrc, rate):
+        self.kind, self.sock, self.addr, self.ssrc, self.rate = kind, sock, addr, ssrc, rate
+        self.pt = _MIRROR_PT[kind]
+        self.key, self.mask = os.urandom(16), os.urandom(16)
+        self.tv_ssrc = None
+        self.seq = random.randrange(1 << 16)
+        self.rtp0 = random.randrange(1 << 32)
+        self.t0 = None
+        self.next_id = 0
+        self.frames = {}
+        self.checkpoint = -1  # the TV has every frame up to this one
+        self.packets = self.octets = 0
+        self.wait_key = False
+        self.lock = threading.Lock()
+        self.stats = {"frames": 0, "bytes": 0, "resent": 0, "skipped": 0, "picture_loss": 0}
+        self.arrive = []  # seconds from sending a frame to the TV having all of it (recent)
+
+    def offer(self, index, delay_ms, **extra):
+        from cryptography.hazmat.primitives.ciphers import Cipher  # noqa: F401 (fail early if missing)
+        return dict({"index": index, "type": f"{self.kind}_source", "rtpProfile": "cast", "rtpPayloadType": self.pt,
+                     "ssrc": self.ssrc, "targetDelay": delay_ms, "aesKey": self.key.hex(),
+                     "aesIvMask": self.mask.hex(), "timeBase": f"1/{self.rate}", "receiverRtcpEventLog": True,
+                     "codecParameter": ""}, **extra)
+
+    def _rtp(self, t):
+        return (self.rtp0 + int(round((t - self.t0) * self.rate))) & 0xFFFFFFFF
+
+    def _encrypt(self, fid, data):
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        nonce = bytearray(16)
+        nonce[8:12] = struct.pack(">I", fid & 0xFFFFFFFF)
+        iv = bytes(a ^ b for a, b in zip(nonce, self.mask))
+        enc = Cipher(algorithms.AES(self.key), modes.CTR(iv)).encryptor()
+        return enc.update(data) + enc.finalize()
+
+    def send(self, data, t, key):
+        """Send one frame captured at time t (time.time() clock). False if it was skipped
+        because the TV is far behind (pictures then wait for the next key picture)."""
+        with self.lock:
+            if self.next_id - 1 - self.checkpoint > 100 or (self.wait_key and not key):
+                self.wait_key = self.kind == "video"
+                self.stats["skipped"] += 1
+                return False
+            self.wait_key = False
+            if self.t0 is None:
+                self.t0 = t
+            fid = self.next_id
+            self.next_id += 1
+            enc = self._encrypt(fid, data)
+            fr = {"ts": self._rtp(t), "key": key, "ref": fid if key else fid - 1, "data": enc,
+                  "n": max(1, -(-len(enc) // _MIRROR_PAYLOAD)), "sent": time.time(), "resent": {}}
+            self.frames[fid] = fr
+            self.frames.pop(fid - 240, None)
+            self.stats["frames"] += 1
+            self.stats["bytes"] += len(data)
+            for p in range(fr["n"]):
+                self._packet(fid, fr, p)
+            return True
+
+    def _packet(self, fid, fr, p):  # with the lock held
+        chunk = fr["data"][p * _MIRROR_PAYLOAD:(p + 1) * _MIRROR_PAYLOAD]
+        self.seq = (self.seq + 1) & 0xFFFF
+        pkt = (struct.pack(">BBHII", 0x80, (0x80 if p == fr["n"] - 1 else 0) | self.pt, self.seq, fr["ts"], self.ssrc)
+               + struct.pack(">BBHHB", (0x80 if fr["key"] else 0) | 0x40, fid & 0xFF, p, fr["n"] - 1, fr["ref"] & 0xFF)
+               + chunk)
+        try:
+            self.sock.sendto(pkt, self.addr)
+        except OSError:
+            return
+        self.packets += 1
+        self.octets += len(chunk)
+
+    def sender_report(self):
+        with self.lock:
+            if self.t0 is None:
+                return None
+            t = time.time()
+            return struct.pack(">BBHIQIII", 0x80, 200, 6, self.ssrc, _ntp64(t), self._rtp(t),
+                               self.packets & 0xFFFFFFFF, self.octets & 0xFFFFFFFF)
+
+    def feedback(self, ck8, losses):
+        """The TV's report: complete up to frame (8 bits of) ck8, and the packets it misses."""
+        now = time.time()
+        with self.lock:
+            latest = self.next_id - 1
+            ck = latest - ((latest - ck8) & 0xFF)
+            if ck > self.checkpoint:
+                for fid in range(self.checkpoint + 1, ck + 1):
+                    fr = self.frames.get(fid)
+                    if fr is not None and "acked" not in fr:
+                        fr["acked"] = now
+                        self.arrive.append(now - fr["sent"])
+                del self.arrive[:-300]
+                self.checkpoint = ck
+            for f8, pid, bits in losses:
+                fid = self.checkpoint + 1 + ((f8 - (self.checkpoint + 1)) & 0xFF)
+                fr = self.frames.get(fid)
+                if fr is None:
+                    continue
+                todo = range(fr["n"]) if pid == 0xFFFF else [pid] + [pid + 1 + i for i in range(8) if bits >> i & 1]
+                for p in todo:
+                    if p < fr["n"] and now - fr["resent"].get(p, 0) > 0.03:
+                        fr["resent"][p] = now
+                        self._packet(fid, fr, p)
+                        self.stats["resent"] += 1
+
+
+class ScreenMirror:
+    """This PC's screen (and sound) on a Chromecast through Google's own mirroring protocol -
+    Cast Streaming, what Chrome's "Cast screen" uses - a fraction of a second behind:
+    - the TV runs Google's mirroring receiver; an OFFER/ANSWER sets up the streams (H.264
+      picture, Opus sound) and gives a UDP port;
+    - every picture and every 10 ms of sound goes there as encrypted RTP packets; the TV plays
+      each at its capture time + delay_ms (the RTCP sender reports tie them to this PC's clock);
+    - the TV reports which frames it has complete and which packets it misses (sent again at
+      once), and logs which frames it decoded and played.
+    Raises MirrorError when the TV can't mirror; the HLS ScreenCast is the fallback then."""
+
+    STOPPED_TV = "Screen casting stopped on the TV"
+
+    def __init__(self, cast, host, encoder="libx264", monitor=0, sound=True, src_size=None,
+                 delay_ms=MIRROR_DELAY_MS, kbps=MIRROR_KBPS, timeout=10.0):
+        from pychromecast.controllers import BaseController
+        self.cast, self.closed, self.why = cast, False, None
+        self.started = time.time()
+        self.procs, self.audio = [], None
+        self._stop = threading.Event()
+        self.with_sound = False
+        answer, got = {}, threading.Event()
+
+        class WebRtc(BaseController):
+            def receive_message(self, _msg, data):
+                if data.get("type") == "ANSWER":
+                    answer.update(data)
+                    got.set()
+                return True
+
+        self._ctl = WebRtc(MIRROR_NS, supporting_app_id=MIRROR_APP, app_must_match=True)
+        cast.register_handler(self._ctl)
+        try:
+            cast.start_app(MIRROR_APP, timeout=20)
+        except Exception as e:
+            self._unregister()
+            raise MirrorError(f"the TV has no mirroring receiver ({e.__class__.__name__})") from e
+        if not cast.status or cast.status.app_id != MIRROR_APP or MIRROR_NS not in (cast.status.namespaces or []):
+            self._unregister()
+            raise MirrorError("the TV didn't start its mirroring receiver")
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 << 20)
+        self.sock.bind(("0.0.0.0", 0))
+        addr = (host, 0)  # the port comes with the ANSWER
+        self.size = mirror_size(src_size)
+        a = _MirrorStream("audio", self.sock, addr, random.randrange(1, 1 << 31), 48000)
+        v = _MirrorStream("video", self.sock, addr, random.randrange(1, 1 << 31), 90000)
+        offered = ([a] if sound else []) + [v]
+        streams = []
+        for i, s in enumerate(offered):
+            if s is a:
+                streams.append(s.offer(i, delay_ms, codecName="opus", bitRate=128000, sampleRate=48000, channels=2))
+            else:
+                streams.append(s.offer(i, delay_ms, codecName="h264", channels=1, maxFrameRate=f"{MIRROR_FPS}/1",
+                                       maxBitRate=kbps * 1000, resolutions=[{"width": self.size[0], "height": self.size[1]}],
+                                       profile="", protection="", level="", errorRecoveryMode=""))
+        self._ctl.send_message({"type": "OFFER", "seqNum": random.randrange(1, 1 << 20),
+                                "offer": {"castMode": "mirroring", "supportedStreams": streams}}, no_add_request_id=True)
+        if not got.wait(timeout):
+            self._fail("the TV didn't answer the offer")
+        ans = answer.get("answer") or {}
+        if answer.get("result") not in (None, "ok") or not ans.get("udpPort"):
+            err = answer.get("error") or {}
+            self._fail(f"the TV refused the offer ({err.get('description') or err.get('code') or 'no reason given'})")
+        addr = (host, int(ans["udpPort"]))
+        self.streams = {}  # our SSRC -> stream
+        self._kinds = {}   # the TV's SSRC -> stream
+        for i, tv_ssrc in zip(ans.get("sendIndexes") or [], ans.get("ssrcs") or []):
+            if 0 <= i < len(offered):
+                s = offered[i]
+                s.addr, s.tv_ssrc = addr, tv_ssrc
+                self.streams[s.ssrc] = s
+                self._kinds[tv_ssrc] = s
+        if v.ssrc not in self.streams:
+            self._fail("the TV doesn't take this picture format")
+        dims = (((ans.get("constraints") or {}).get("video") or {}).get("maxDimensions") or {})
+        if dims.get("width") and dims.get("height") and (dims["width"] < self.size[0] or dims["height"] < self.size[1]):
+            self.size = mirror_size(self.size, min(dims["height"], int(dims["width"] * self.size[1] / self.size[0])))
+        self.video, self.audio_stream = v, (a if a.ssrc in self.streams else None)
+        self.tv_log = {"played": 0, "late": 0, "decoded": 0}
+        self.last_feedback = None
+        self._reported = time.time()
+        try:
+            vp = adopt(subprocess.Popen(mirror_video_command(encoder, monitor, self.size, kbps), stdout=subprocess.PIPE,
+                                        stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW))
+            self.procs.append(vp)
+            threading.Thread(target=h264_pictures, args=(vp.stdout, v.send, self._stop), daemon=True).start()
+            if self.audio_stream is not None:
+                self.audio = LoopbackAudio()
+                fmt = self.audio.start()
+                if fmt:
+                    ap = adopt(subprocess.Popen(mirror_audio_command(fmt), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                                stderr=subprocess.DEVNULL, creationflags=NO_WINDOW))
+                    self.procs.append(ap)
+                    self.audio.attach(ap.stdin)
+                    self.with_sound = True
+                    threading.Thread(target=ogg_packets, daemon=True,
+                                     args=(ap.stdout, lambda d, t: a.send(d, t, True), self._stop)).start()
+                else:
+                    self.audio.stop()
+                    self.audio = None
+        except Exception as e:
+            self._fail(f"couldn't start capturing the screen ({e})")
+        threading.Thread(target=self._rtcp, daemon=True).start()
+
+    def _unregister(self):
+        try:
+            self.cast.socket_client.unregister_handler(self._ctl)
+        except Exception:
+            pass
+
+    def _fail(self, why):
+        self.close(quit_tv=True)
+        raise MirrorError(why)
+
+    # ---- running
+    def _rtcp(self):
+        last_sr = 0.0
+        self.sock.settimeout(0.05)
+        while not self.closed:
+            now = time.time()
+            if now - last_sr >= 0.5:  # sender reports: RTP time <-> this PC's clock, twice a second
+                last_sr = now
+                for s in list(self.streams.values()):
+                    sr = s.sender_report()
+                    if sr:
+                        try:
+                            self.sock.sendto(sr, s.addr)
+                        except OSError:
+                            pass
+                self._check()
+            try:
+                buf = self.sock.recv(65536)
+            except (socket.timeout, TimeoutError, OSError):
+                continue
+            if len(buf) >= 2 and 200 <= buf[1] <= 207:
+                self.last_feedback = time.time()
+                self._parse(buf)
+
+    def _parse(self, buf):
+        off = 0
+        while off + 4 <= len(buf):
+            b0, pt, ln = struct.unpack_from(">BBH", buf, off)
+            body = buf[off + 4:off + (ln + 1) * 4]
+            off += (ln + 1) * 4
+            fmt = b0 & 0x1F
+            if pt == 206 and len(body) >= 8:
+                s = self.streams.get(struct.unpack_from(">I", body, 4)[0])
+                if s is None:
+                    continue
+                if fmt == 15 and len(body) >= 16 and struct.unpack_from(">I", body, 8)[0] == 0x43415354:  # 'CAST'
+                    ck8, n, _delay = struct.unpack_from(">BBH", body, 12)
+                    s.feedback(ck8, [struct.unpack_from(">BHB", body, 16 + 4 * i) for i in range(n)
+                                     if 16 + 4 * i + 4 <= len(body)])
+                elif fmt == 1:  # picture loss: the next key picture (at most 2 s away) repairs it
+                    s.stats["picture_loss"] += 1
+            elif pt == 204 and len(body) >= 8 and struct.unpack_from(">I", body, 4)[0] == 0x43415354:
+                s = self._kinds.get(struct.unpack_from(">I", body)[0])
+                if s is self.video:
+                    self._tv_frame_log(body[8:])
+
+    def _tv_frame_log(self, d):
+        # the TV's own log; event types on the wire: 11 acked, 12 played (value: ms early, - is late),
+        # 13 decoded, 14 packet received
+        off = 0
+        while off + 8 <= len(d):
+            count = (struct.unpack_from(">I", d, off + 4)[0] >> 24) + 1
+            off += 8
+            for _ in range(count):
+                if off + 4 > len(d):
+                    return
+                val, tw = struct.unpack_from(">HH", d, off)
+                off += 4
+                if tw >> 12 == 12:
+                    self.tv_log["played"] += 1
+                    self.tv_log["late"] += val >= 0x8000
+                elif tw >> 12 == 13:
+                    self.tv_log["decoded"] += 1
+
+    def _check(self):
+        """Still on? Stops when the TV closed the receiver, stopped answering, or a capture ended."""
+        if self.closed:
+            return
+        why = None
+        st = self.cast.status
+        if st is not None and st.app_id != MIRROR_APP:
+            why = self.STOPPED_TV
+        elif self.last_feedback is None and time.time() - self.started > 20:
+            why = "The TV didn't show the screen"
+        elif self.last_feedback is not None and time.time() - self.last_feedback > 10:
+            why = "The TV stopped answering"
+        elif any(p.poll() is not None for p in self.procs):
+            why = "The screen capture stopped"
+        if why:
+            self.why = why
+            self.close()
+            return
+        if time.time() - self._reported >= 30:
+            self._reported = time.time()
+            v, arr = self.video, sorted(self.video.arrive)
+            log(f"screen: mirroring - {self.tv_log['played']} pictures played on the TV ({self.tv_log['late']} late), "
+                f"{v.stats['resent']} packets sent again, {v.stats['skipped']} pictures skipped, "
+                f"frames complete there after {arr[len(arr) // 2] * 1000 if arr else 0:.0f} ms (median)")
+
+    def state(self):
+        """'starting', 'playing' (the TV shows it) or 'stopped' (see .why)."""
+        if self.closed:
+            return "stopped"
+        if self.tv_log["played"] or (self.video.checkpoint >= 30 and not self.tv_log["decoded"]):
+            return "playing"
+        return "starting"
+
+    def running(self):
+        return not self.closed
+
+    def close(self, quit_tv=False):
+        """Stop sending; quit_tv also closes the receiver on the TV (back to its home screen)."""
+        first = not self.closed
+        self.closed = True
+        self._stop.set()
+        if first:
+            if self.audio is not None:
+                self.audio.stop()
+            for p in self.procs:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self._unregister()
+        if quit_tv:
+            try:
+                st = self.cast.status
+                if st is not None and st.app_id == MIRROR_APP:
+                    self.cast.quit_app(timeout=10)
+            except Exception:
+                pass
 
 
 class MediaHandler(BaseHTTPRequestHandler):
@@ -2363,35 +2976,24 @@ class MediaHandler(BaseHTTPRequestHandler):
             self.media.end_transcode(proc)
 
     def _serve_screen(self, entry, head):
-        # the PC screen, live, for as long as the TV keeps reading
-        self.close_connection = True
-        self.send_response(200)
-        self.send_header("Content-Type", "video/mp4")
-        self.send_header("Connection", "close")
-        self.send_header("Cache-Control", "no-cache")
-        self._cors()
-        self.end_headers()
-        if head:
+        # the live screen stream: its playlist (always fresh) and its 1-second pieces
+        name = self.path.split("?", 1)[0].strip("/").split("/")[-1]
+        f = entry["cast"].file(name)
+        if f is None:
+            self.send_error(404)
             return
-        proc, sound = self.media.start_screen(entry)
-        if proc is None:
+        if name.endswith(".m3u8"):
+            body = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self._cors()
+            self.end_headers()
+            if not head:
+                self.wfile.write(body)
             return
-        try:
-            while True:
-                chunk = proc.stdout.read1(64 * 1024)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                now = time.time()
-                entry.setdefault("first", now)
-                entry["last"] = now
-                entry["sent"] = entry.get("sent", 0) + len(chunk)
-        except OSError:
-            pass
-        finally:
-            if sound is not None:
-                sound.stop()
-            self.media.end_transcode(proc)
+        self._serve_file(str(f), "video/mp4", head, entry)
 
 
 class QuietHTTPServer(ThreadingHTTPServer):
@@ -2415,6 +3017,7 @@ class MediaServer:
         self.ip = None
         self.on_rerequest = None  # called (from a server thread) when the TV restarts a live stream
         self.hls_jobs: list[HlsJob] = []
+        self.screens: list[ScreenCast] = []
 
     def start(self):
         handler = type("BoundMediaHandler", (MediaHandler,), {"media": self})
@@ -2445,33 +3048,17 @@ class MediaServer:
                 return entry
         return None
 
-    def start_screen(self, entry):
-        """ffmpeg capturing the screen (and a LoopbackAudio feeding it the PC's sound):
-        (process, sound) or (None, None)."""
-        sound = LoopbackAudio() if entry.get("sound") else None
-        fmt = sound.start() if sound else None
-        if sound is not None and fmt is None:
-            sound.stop()
-            sound = None  # no speakers to record: send silence
-        try:
-            proc = subprocess.Popen(screen_command(entry.get("encoder", "libx264"), fmt, entry.get("monitor", 0)),
-                                    stdin=subprocess.PIPE if fmt else subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
-        except OSError:
-            if sound:
-                sound.stop()
-            return None, None
-        if sound is not None:
-            sound.attach(proc.stdin)
+    def add_screen(self, cast):
+        """Serve a ScreenCast to the TV: the playlist URL (its pieces sit next to it)."""
         with self.lock:
-            self.transcodes.add(proc)
-        return proc, sound
+            self.screens.append(cast)
+        return self.register("screen", "screen", name="index.m3u8", cast=cast)
 
     def start_transcode(self, entry):
         CACHE_DIR.mkdir(exist_ok=True)
         try:
-            proc = subprocess.Popen(ffmpeg_command(entry), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, cwd=str(CACHE_DIR), creationflags=NO_WINDOW)
+            proc = adopt(subprocess.Popen(ffmpeg_command(entry), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL, cwd=str(CACHE_DIR), creationflags=NO_WINDOW))
         except OSError:
             return None
         with self.lock:
@@ -2497,6 +3084,9 @@ class MediaServer:
             procs = list(self.transcodes)
             jobs = [j for j in self.hls_jobs if j is not keep]
             self.hls_jobs = [j for j in self.hls_jobs if j is keep]
+            screens, self.screens = self.screens, []
+        for s in screens:
+            s.close()
         for p in procs:
             try:
                 p.kill()
@@ -2822,7 +3412,15 @@ class ChromecastPlayer:
         except Exception:
             pass
 
+    def _leave_mirroring(self):
+        # After the screen was mirrored the TV still runs Google's mirroring receiver, which
+        # also answers on the media channel: start the media receiver before loading anything
+        st = getattr(self.cast, "status", None)
+        if st is not None and st.app_id == MIRROR_APP:
+            self.cast.start_app(MEDIA_RECEIVER, timeout=20)
+
     def load(self, s, start):
+        self._leave_mirroring()
         direct = not s["live"]
         subs = {}
         if s.get("sub_url"):
@@ -2841,9 +3439,13 @@ class ChromecastPlayer:
         self.load_at = time.time()
         self.our_urls = getattr(self, "our_urls", set()) | {s["url"]}
         hls = {"media_info": {"hlsSegmentFormat": "fmp4", "hlsVideoSegmentFormat": "fmp4"}} if s.get("hls") else {}
+        # The PC screen is a live HLS stream, but announced as LIVE the receiver keeps jumping
+        # to the live edge: one picture per piece and buffering in between (measured on
+        # 'Slaapkamer'). Announced as BUFFERED it plays the same playlist smoothly.
+        live_type = s["live"] and not s.get("screen")
         self.mc.play_media(s["url"], s["mime"], title=s["title"], thumb=s.get("thumb_url"),
                            current_time=start if direct and start > 0 else None,
-                           stream_type="LIVE" if s["live"] else "BUFFERED", **subs, **hls)
+                           stream_type="LIVE" if live_type else "BUFFERED", **subs, **hls)
         self.mc.block_until_active(timeout=30)
         if subs:
             threading.Thread(target=self._ensure_subtitles, daemon=True).start()
@@ -2913,6 +3515,7 @@ class ChromecastPlayer:
 
     def show_picture(self, url, title=APP_NAME):
         """Show a still picture on the TV (the 'connected' screen)."""
+        self._leave_mirroring()
         self.our_urls = getattr(self, "our_urls", set()) | {url}
         self.mc.play_media(url, "image/png", title=title)
         self.mc.block_until_active(timeout=15)
