@@ -2297,6 +2297,7 @@ def _ddagrab_args(monitor):
 VDD_HWID = "Root\\MttVDD"
 VDD_NAME = "Virtual Display Driver"
 VDD_SETTINGS_DIR = Path("C:/VirtualDisplayDriver")  # where the driver reads vdd_settings.xml
+VDD_MARKER = "installed-by-video-caster.txt"  # in VDD_SETTINGS_DIR: Video Caster created the device
 TV_DISPLAY_SIZE = (1920, 1080)
 
 
@@ -2521,7 +2522,8 @@ def install_display_driver_elevated(result_path):
         setupapi.SetupDiDestroyDeviceInfoList.argtypes = [HDEVINFO]
         newdev.UpdateDriverForPlugAndPlayDevicesW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR,
                                                               wintypes.DWORD, ctypes.POINTER(wintypes.BOOL)]
-        if virtual_display() is None:  # no device yet: create it (else only the driver is updated)
+        created = virtual_display() is None
+        if created:  # no device yet: create it (else only the driver is updated)
             cls, cname = GUID(), ctypes.create_unicode_buffer(256)
             step("read the driver's device class", setupapi.SetupDiGetINFClassW(inf, byref(cls), cname, 256, None))
             hset = setupapi.SetupDiCreateDeviceInfoList(byref(cls), None)
@@ -2540,10 +2542,60 @@ def install_display_driver_elevated(result_path):
                 setupapi.SetupDiDestroyDeviceInfoList(hset)
         reboot = wintypes.BOOL()
         step("install the driver", newdev.UpdateDriverForPlugAndPlayDevicesW(None, VDD_HWID, inf, 1, byref(reboot)))
-        out.update(ok=True, reboot=bool(reboot.value))
+        if created:  # ours: Video Caster's uninstaller may take it away again (a driver set up by hand stays)
+            (VDD_SETTINGS_DIR / VDD_MARKER).write_text(
+                "Video Caster installed the Virtual Display Driver for 'Use the TV as a second display'.\n"
+                "Uninstalling Video Caster removes it again; delete this file to keep it.\n", encoding="utf-8")
+        out.update(ok=True, reboot=bool(reboot.value), ours=created or (VDD_SETTINGS_DIR / VDD_MARKER).exists())
     except Exception as e:
         out.update(ok=False, error=str(e))
-    Path(result_path).write_text(json.dumps(out), encoding="utf-8")
+    if result_path and result_path != "-":
+        Path(result_path).write_text(json.dumps(out), encoding="utf-8")
+    return out
+
+
+def _vdd_driver_packages():
+    """The Virtual Display Driver's copies in Windows' driver store (C:\\Windows\\INF\\oemNN.inf).
+    Read from the files themselves: pnputil's own listing is in the user's language."""
+    found = []
+    for f in sorted((Path(os.environ.get("WINDIR", "C:/Windows")) / "INF").glob("oem*.inf")):
+        try:
+            raw = f.read_bytes()
+            text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("latin-1")
+        except OSError:
+            continue
+        if VDD_HWID.lower() in text.lower() and "mttvdd" in text.lower():
+            found.append(f.name)
+    return found
+
+
+def uninstall_display_driver_elevated(result_path=None, only_ours=True):
+    """Runs with admin rights (Video Caster's uninstaller starts it): remove the virtual display's
+    device and driver package, and C:\\VirtualDisplayDriver - but with only_ours, only when Video
+    Caster installed it (the marker file); a driver set up by hand stays."""
+    out = {"ok": True, "removed": []}
+    try:
+        if only_ours and not (VDD_SETTINGS_DIR / VDD_MARKER).exists():
+            out["skipped"] = "not installed by Video Caster"
+        else:
+            ps = ("(Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains "
+                  f"'{VDD_HWID}' }}).InstanceId")
+            ids = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                                 capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW).stdout.split()
+            for dev_id in ids:
+                r = subprocess.run(["pnputil", "/remove-device", dev_id], capture_output=True, text=True, timeout=60,
+                                   creationflags=NO_WINDOW)
+                out["removed"].append({"device": dev_id, "ok": r.returncode == 0})
+            for inf in _vdd_driver_packages():
+                r = subprocess.run(["pnputil", "/delete-driver", inf, "/uninstall", "/force"], capture_output=True,
+                                   text=True, timeout=120, creationflags=NO_WINDOW)
+                out["removed"].append({"driver": inf, "ok": r.returncode == 0})
+            shutil.rmtree(VDD_SETTINGS_DIR, ignore_errors=True)
+            out["ok"] = all(x["ok"] for x in out["removed"]) and virtual_display() is None
+    except Exception as e:
+        out.update(ok=False, error=str(e))
+    if result_path and result_path != "-":
+        Path(result_path).write_text(json.dumps(out), encoding="utf-8")
     return out
 
 

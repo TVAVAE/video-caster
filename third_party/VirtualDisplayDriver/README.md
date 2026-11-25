@@ -20,13 +20,25 @@ The build checks that hash and the files' signatures. It then puts the driver fi
 executable. Pass `-DisplayDriverZip <path>` to use a copy you downloaded yourself; otherwise
 the build downloads the file above.
 
-Nothing is installed until someone chooses *Use the TV as a second display*. Video Caster then
-asks first, and Windows asks for admin permission. The app runs itself once with admin rights
-and does what `devcon install MttVDD.inf Root\MttVDD` would do. It copies the files to
-`C:\VirtualDisplayDriver`, where the driver reads its settings, creates the device
-`Root\MttVDD`, and installs the driver on it.
+It is installed in one of two ways, both running `VideoCaster.exe --install-display-driver`
+with admin rights:
 
-To remove the driver: Device Manager → *Display adapters* → *Virtual Display Driver* →
+- **In Setup**: the optional task *Install the virtual display* (unticked by default; only
+  when installing for all users, since a driver needs admin rights).
+- **On first use**: the first time someone chooses *Second display*, Video Caster asks first,
+  then Windows asks for admin permission, and the app runs itself once with admin rights.
+
+Either way the app does what `devcon install MttVDD.inf Root\MttVDD` would do. It copies the
+files to `C:\VirtualDisplayDriver` (where the driver reads its settings), creates the device
+`Root\MttVDD`, and installs the driver on it. When it created the device itself, it leaves
+`installed-by-video-caster.txt` there.
+
+**Uninstalling** Video Caster (installed for all users) runs
+`VideoCaster.exe --uninstall-display-driver -`. That removes the device, the driver package
+from Windows' driver store, and `C:\VirtualDisplayDriver` - but only when that file shows Video
+Caster installed it. A Virtual Display Driver set up by hand, or by another program, stays.
+
+To remove it by hand: Device Manager → *Display adapters* → *Virtual Display Driver* →
 *Uninstall device* (tick *Attempt to remove the driver for this device*). Then delete
 `C:\VirtualDisplayDriver`.
 

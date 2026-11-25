@@ -21,9 +21,15 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.1
+## What's new in 0.3.2
 
-A cleaner window that says what it does:
+- **The virtual display in Setup**: tick *Install the virtual display* to get *Second display*
+  ready with the app (when installing for all users). Uninstalling removes it again - only if
+  Video Caster installed it.
+- The [third-party components](#third-party-components) are listed, with their projects and
+  licenses.
+
+### 0.3.1: a cleaner window that says what it does
 
 - **Show your screen on the TV**: the screen button opens one panel - *Mirror my screen* or
   *Second display*, which screen, PC sound and low delay, each with a line on what to expect.
@@ -241,11 +247,14 @@ and, on a Chromecast or Google TV, a fraction of a second behind.
 - Windows extends the desktop only onto displays it knows, so this needs a **virtual display**.
   Video Caster includes the free, open-source
   [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT
-  license, signed by the SignPath Foundation). The first time you choose the option, Video
-  Caster asks whether to install it, and Windows asks for admin permission - only once.
-  Nothing is installed if you don't use the option.
-- To remove the driver again: Device Manager → *Display adapters* → *Virtual Display Driver* →
-  *Uninstall device* (tick *Attempt to remove the driver*), then delete `C:\VirtualDisplayDriver`.
+  license, signed by the SignPath Foundation). Install it right away by ticking *Install the
+  virtual display* in Setup (when installing for all users), or later: the first time you choose
+  *Second display*, Video Caster asks whether to install it, and Windows asks for admin
+  permission - only once. Nothing is installed if you don't use the option.
+- Uninstalling Video Caster (installed for all users) removes the driver too - but only if
+  Video Caster installed it; a virtual display you set up yourself stays. To remove it by
+  hand: Device Manager → *Display adapters* → *Virtual Display Driver* → *Uninstall device*
+  (tick *Attempt to remove the driver*), then delete `C:\VirtualDisplayDriver`.
 
 ### Keyboard
 
@@ -293,6 +302,18 @@ to the TV you picked, and only while it's on). Only when you use the
 online subtitle search, the video's file name, size and fingerprint (OpenSubtitles' file hash)
 are sent to Stremio's subtitle service (`strem.io`) - and to OpenSubtitles.com if you added
 your own API key.
+
+## Third-party components
+
+Two components are shipped with Video Caster but kept in their own projects; the build takes
+them from their official releases instead of copying them into this repository:
+
+| Component | Used for | Project | License | How the build gets it |
+| --- | --- | --- | --- | --- |
+| FFmpeg (Gyan full build) | Converting video, capturing the screen | [ffmpeg.org](https://ffmpeg.org), [gyan.dev builds](https://www.gyan.dev/ffmpeg/builds/) | GPLv3 | `-FFmpegDirectory` (an extracted build), installer only |
+| Virtual Display Driver | *Second display* | [VirtualDrivers/Virtual-Display-Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) | MIT | Its release [25.7.23](https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/tag/25.7.23), pinned by SHA-256 - see [third_party/VirtualDisplayDriver](third_party/VirtualDisplayDriver/README.md) |
+
+Their licenses are installed with Video Caster (`ffmpeg\` and `licenses\` in its folder).
 
 ## Files
 
@@ -403,7 +424,7 @@ containing `bin` and `LICENSE`, and at Inno Setup's `ISCC.exe` (winget installs 
 
 This builds the app and **`dist\VideoCaster-Setup.exe`**. Use `-SkipAppBuild` to package
 an already built `dist\VideoCaster.exe`, `-DisplayDriverZip <path>` as above, or
-`-Version "0.3.2"` to set the installer version (the default is the current release, 0.3.1). The exe, installer and shortcut icons
+`-Version "0.3.3"` to set the installer version (the default is the current release, 0.3.2). The exe, installer and shortcut icons
 come from `app/assets/videocaster.ico`. `installer/VideoCaster.iss` defines installation, shortcuts, optional private
 network firewall rules, and uninstall. FFmpeg's license and build information are
 installed with it. Downloaded tools and staged payloads are not committed to Git.

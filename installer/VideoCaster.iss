@@ -40,6 +40,9 @@ ChangesAssociations=yes
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 Name: privatefirewall; Description: "Allow TVs to connect on private local networks (recommended)"; Check: IsAdminInstallMode
+; the Virtual Display Driver (MIT, github.com/VirtualDrivers/Virtual-Display-Driver) inside VideoCaster.exe:
+; installed now if ticked, else the first time someone picks 'Second display' (Windows asks then)
+Name: virtualdisplay; Description: "Install the virtual display for 'Second display' (the TV as an extra screen; Virtual Display Driver, MIT license)"; Flags: unchecked; Check: IsAdminInstallMode
 
 [Files]
 Source: "{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
@@ -59,10 +62,13 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Video Caster - Private UDP"" program=""{app}\VideoCaster.exe"""; Flags: runhidden; Check: IsAdminInstallMode
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Video Caster - Private TCP"" dir=in action=allow program=""{app}\VideoCaster.exe"" enable=yes profile=private remoteip=localsubnet protocol=TCP"; Flags: runhidden; Tasks: privatefirewall; Check: IsAdminInstallMode
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Video Caster - Private UDP"" dir=in action=allow program=""{app}\VideoCaster.exe"" enable=yes profile=private remoteip=localsubnet protocol=UDP"; Flags: runhidden; Tasks: privatefirewall; Check: IsAdminInstallMode
+Filename: "{app}\VideoCaster.exe"; Parameters: "--install-display-driver ""{tmp}\virtual-display.json"""; StatusMsg: "Installing the virtual display..."; Flags: runhidden waituntilterminated; Tasks: virtualdisplay; Check: IsAdminInstallMode
 Filename: "{app}\VideoCaster.exe"; Description: "Launch Video Caster"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Video Caster - Private TCP"" program=""{app}\VideoCaster.exe"""; Flags: runhidden; Check: IsAdminInstallMode; RunOnceId: RemovePrivateTCP
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Video Caster - Private UDP"" program=""{app}\VideoCaster.exe"""; Flags: runhidden; Check: IsAdminInstallMode; RunOnceId: RemovePrivateUDP
+; the virtual display goes too - only if Video Caster installed it (now or later from the app); one set up by hand stays
+Filename: "{app}\VideoCaster.exe"; Parameters: "--uninstall-display-driver -"; Flags: runhidden waituntilterminated; Check: IsAdminInstallMode; RunOnceId: RemoveVirtualDisplay
 
 ; User playlists and watch progress live outside {app}; uninstall preserves them.

@@ -3790,11 +3790,17 @@ def main():
     parser.add_argument("--install-display-driver", metavar="RESULT",
                         help="(the app starts this itself, with admin rights) install the bundled virtual display "
                              "driver for 'Use the TV as a second display', write the outcome to RESULT, exit")
+    parser.add_argument("--uninstall-display-driver", metavar="RESULT",
+                        help="(Video Caster's uninstaller runs this, with admin rights) remove the virtual display "
+                             "driver if Video Caster installed it; RESULT: outcome file, or - for none")
     parser.add_argument("files", nargs="*", help="videos or folders to add")
     args = parser.parse_args()
 
     if args.install_display_driver:
         out = be.install_display_driver_elevated(args.install_display_driver)
+        sys.exit(0 if out.get("ok") else 1)
+    if args.uninstall_display_driver:
+        out = be.uninstall_display_driver_elevated(args.uninstall_display_driver)
         sys.exit(0 if out.get("ok") else 1)
 
     if args.check_device:
