@@ -47,7 +47,7 @@ except Exception:  # pragma: no cover
     NETWORK_IMPORT_ERRORS["airplay"] = traceback.format_exc()
 
 APP_NAME = "Video Caster"
-APP_VERSION = "0.3.3"  # the one place for the version: build-installer.ps1 reads it from here
+APP_VERSION = "0.3.4"  # the one place for the version: build-installer.ps1 reads it from here
 APP_DIR = Path(__file__).resolve().parent
 # A one-file executable extracts its code into a temporary directory. Keep user
 # data outside that directory so upgrades and closing the app cannot erase it.
@@ -2203,6 +2203,19 @@ class LoopbackAudio:
             _release(objs)
             if pwfx:
                 ctypes.windll.ole32.CoTaskMemFree(pwfx)
+
+
+def keep_awake(system=False, display=False):
+    """Ask Windows not to sleep (system) and not to switch the screen off (display) - for the
+    calling thread, until it calls again; keep_awake() lets Windows sleep as usual again.
+    Returns the flags that were set before (0 if it failed or isn't Windows)."""
+    if sys.platform != "win32":
+        return 0
+    import ctypes
+    f = ctypes.windll.kernel32.SetThreadExecutionState
+    f.restype, f.argtypes = ctypes.c_uint32, [ctypes.c_uint32]
+    # ES_CONTINUOUS (until changed) | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    return f(0x80000000 | (0x1 if system or display else 0) | (0x2 if display else 0))
 
 
 def capture_displays():

@@ -21,15 +21,15 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.3
+## What's new in 0.3.4
 
-- **Updates install themselves**: when a new version is out, a bar in the window offers it -
-  *Update now* downloads it, checks it and installs it over this one, then starts Video Caster
-  again. See [Windows installer](#windows-installer). The daily check can be switched off.
-- **The back-10-seconds button** now shows an arrow turning back (anticlockwise).
-- The settings show the version (*About Video Caster*) with *Check for updates*.
+- **The PC stays awake while something is on the TV** (and its screen on while it's shared), so
+  a film or a shared screen no longer stops when Windows would go to sleep. Paused for half an
+  hour, Windows may sleep again.
+- **The keyboard's media keys control the TV** - play/pause, next, previous (back 10 s), stop -
+  also when Video Caster isn't the active window, and only while something is on the TV.
 
-Earlier: 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
+Earlier: 0.3.3 updates itself; 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
 bar, the TV in the header and the empty-playlist cards; 0.3.0 *Use the TV as a second display*;
 0.2.1 low-delay screen mirroring; 0.2.0 *Cast your screen*. All versions and downloads:
 [releases](https://github.com/TVAVAE/video-caster/releases).
@@ -47,6 +47,10 @@ bar, the TV in the header and the empty-playlist cards; 0.3.0 *Use the TV as a s
   and carries on where you were. A slow connection is recognised as such.
 - Remembers where you stopped in every video and marks videos as watched.
 - Speed test of the connection to the TV.
+- Keeps the PC awake while something is on the TV (and its screen on while it's shared), so a
+  film or a shared screen doesn't stop when Windows would go to sleep.
+- The keyboard's media keys control the TV while something is on it - and are left to other
+  players the rest of the time.
 
 **Audio**
 - Choose the audio track by language and format, e.g. *English (DD+ Atmos, 5.1)*.
@@ -266,6 +270,7 @@ and, on a Chromecast or Google TV, a fraction of a second behind.
 | Enter | Play the selected video |
 | Delete | Remove from the playlist |
 | Ctrl+O | Add videos |
+| Media keys | While something is on the TV, also when Video Caster isn't the active window: play/pause, next video, previous = back 10 s, stop (also ends sharing the screen) |
 
 Right-click a video in the playlist for more: play from the beginning, mark as (not) watched,
 find subtitles online, show in Explorer.

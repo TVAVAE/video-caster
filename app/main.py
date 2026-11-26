@@ -1674,6 +1674,9 @@ class MainWindow(QWidget):
         self.screen = None       # while the PC screen is cast: {index, sound, player, since, playing}
         self.tv_display = None   # the TV as a second display: {name, ours (Video Caster switched it on)}
         self.tv_display_busy = False
+        self.awake_level = None  # None, "system" (video on the TV) or "display" (screen shared)
+        self.paused_since = None
+        self.media_keys_on = False
         self.screen_timer = QTimer(self, interval=2000, timeout=self._screen_poll)
         self.load_lock = threading.Lock()
         self.pending_seek = None
@@ -2041,6 +2044,8 @@ class MainWindow(QWidget):
         if self.tv_display is not None and self.tv_display["ours"]:
             self._safe(be.detach_virtual_display)  # no windows left on a screen nobody sees
             self.tv_display = None
+        self._set_media_keys(False)
+        be.keep_awake()  # Windows may sleep as usual
         self.settings_panel.hide()
         self.save()
         # Saying goodbye to the TV and stopping the TV search can take long: a TV the app
@@ -3503,7 +3508,68 @@ class MainWindow(QWidget):
 
         worker(work)
 
+    # ----- while something is on the TV: the PC stays awake, the media keys control the TV
+    PAUSE_AWAKE_SECS = 30 * 60  # paused this long: Windows may sleep again
+    MEDIA_KEYS = {1: 0xB3, 2: 0xB0, 3: 0xB1, 4: 0xB2}  # hotkey id -> play/pause, next, previous, stop key
+
+    def _update_power_and_keys(self):
+        sharing = self.screen is not None
+        video = self.player is not None and bool(self.now_path)
+        if video and self.play_state == "paused":
+            self.paused_since = self.paused_since or time.time()
+        else:
+            self.paused_since = None
+        awake = video and (self.paused_since is None or time.time() - self.paused_since < self.PAUSE_AWAKE_SECS)
+        level = "display" if sharing else "system" if awake else None  # (a shared screen must stay on too)
+        if level != self.awake_level:
+            self.awake_level = level
+            be.keep_awake(system=level is not None, display=level == "display")
+            be.log({"display": "power: keeping the PC and its screen awake (screen on the TV)",
+                    "system": "power: keeping the PC awake (video on the TV)",
+                    None: "power: the PC may sleep again"}[level])
+        self._set_media_keys(sharing or video)
+
+    def _set_media_keys(self, on):
+        """Take the keyboard's media keys while something is on the TV; give them back after (so
+        other players have them the rest of the time)."""
+        if on == self.media_keys_on or sys.platform != "win32":
+            return
+        import ctypes
+        user32, hwnd = ctypes.windll.user32, int(self.winId())
+        if on:
+            got = [k for k, vk in self.MEDIA_KEYS.items() if user32.RegisterHotKey(hwnd, k, 0x4000, vk)]  # NOREPEAT
+            be.log("media keys: controlling the TV" + ("" if len(got) == len(self.MEDIA_KEYS) else
+                                                       f" ({len(self.MEDIA_KEYS) - len(got)} taken by another program)"))
+        else:
+            for k in self.MEDIA_KEYS:
+                user32.UnregisterHotKey(hwnd, k)
+            be.log("media keys: given back")
+        self.media_keys_on = on
+
+    def nativeEvent(self, event_type, message):
+        if sys.platform == "win32" and bytes(event_type) == b"windows_generic_MSG":
+            import ctypes.wintypes
+            msg = ctypes.wintypes.MSG.from_address(int(message))
+            if msg.message == 0x0312 and msg.wParam in self.MEDIA_KEYS:  # WM_HOTKEY: one of ours
+                QTimer.singleShot(0, lambda k=int(msg.wParam): self._media_key(k))
+                return True, 0
+        return super().nativeEvent(event_type, message)
+
+    def _media_key(self, k):
+        if k == 4:  # stop: the video, or sharing the screen
+            if self.player is not None or self.screen is not None:
+                self.stop()
+        elif self.screen is not None:
+            return  # play/pause, next, previous mean nothing for a shared screen
+        elif k == 1:
+            self.play_pause()
+        elif k == 2:
+            self.play_next()
+        elif k == 3:
+            self.seek_relative(-10)
+
     def _poll(self):
+        self._update_power_and_keys()
         if self.player is None or self.loading:
             return
         player = self.player
