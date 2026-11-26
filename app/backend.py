@@ -47,7 +47,7 @@ except Exception:  # pragma: no cover
     NETWORK_IMPORT_ERRORS["airplay"] = traceback.format_exc()
 
 APP_NAME = "Video Caster"
-APP_VERSION = "0.3.4"  # the one place for the version: build-installer.ps1 reads it from here
+APP_VERSION = "0.3.5"  # the one place for the version: build-installer.ps1 reads it from here
 APP_DIR = Path(__file__).resolve().parent
 # A one-file executable extracts its code into a temporary directory. Keep user
 # data outside that directory so upgrades and closing the app cannot erase it.
@@ -60,6 +60,27 @@ CACHE_DIR = DATA_DIR / "cache"
 
 # Keeps ffmpeg/ffprobe from flashing a console window on Windows.
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def https_context():
+    """Certificate checking for HTTPS (GitHub for updates, the subtitle services): Windows'
+    certificate store plus certifi's (Mozilla's) list. The store alone can lack the root that a
+    site's certificate chain ends at - Windows fetches those only for its own programs - and
+    then the check fails with 'unable to get issuer certificate' (seen with api.github.com)."""
+    import ssl
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except Exception:
+        pass  # (Windows' store alone, as before)
+    return ctx
+
+
+try:  # every urllib request of the app uses it
+    urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=https_context())))
+except Exception:
+    pass
 
 _JOB = None
 _JOB_LOCK = threading.Lock()

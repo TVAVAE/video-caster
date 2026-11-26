@@ -2,3 +2,4 @@ PySide6-Essentials>=6.8
 pychromecast>=14.0.0
 pyatv>=0.16.0
 numpy>=2.0
+certifi>=2024.2.2

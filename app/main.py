@@ -4026,6 +4026,8 @@ def main():
     parser.add_argument("--install-display-driver", metavar="RESULT",
                         help="(the app starts this itself, with admin rights) install the bundled virtual display "
                              "driver for 'Use the TV as a second display', write the outcome to RESULT, exit")
+    parser.add_argument("--check-update", metavar="REPORT",
+                        help="ask GitHub for the newest release, write the outcome (JSON) to REPORT, exit")
     parser.add_argument("--uninstall-display-driver", metavar="RESULT",
                         help="(Video Caster's uninstaller runs this, with admin rights) remove the virtual display "
                              "driver if Video Caster installed it; RESULT: outcome file, or - for none")
@@ -4038,6 +4040,14 @@ def main():
     if args.uninstall_display_driver:
         out = be.uninstall_display_driver_elevated(args.uninstall_display_driver)
         sys.exit(0 if out.get("ok") else 1)
+    if args.check_update:  # for diagnosing the update check (certificates, network) from a command line
+        try:
+            info, err = be.check_for_update(), None
+        except Exception as e:
+            info, err = None, str(e) or e.__class__.__name__
+        Path(args.check_update).write_text(json.dumps({"version": be.APP_VERSION, "newer": info, "error": err},
+                                                      indent=1), encoding="utf-8")
+        sys.exit(1 if err else 0)
 
     if args.check_device:
         import logging

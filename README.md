@@ -21,13 +21,14 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.4
+## What's new in 0.3.5
 
-- **The PC stays awake while something is on the TV** (and its screen on while it's shared), so
-  a film or a shared screen no longer stops when Windows would go to sleep. Paused for half an
-  hour, Windows may sleep again.
-- **The keyboard's media keys control the TV** - play/pause, next, previous (back 10 s), stop -
-  also when Video Caster isn't the active window, and only while something is on the TV.
+- **The update check works**: in 0.3.3 and 0.3.4 it could fail with a certificate error
+  ("unable to get issuer certificate"), so no update was offered. The subtitle search could hit
+  the same error. Install 0.3.5 by hand once; from then on updates come by themselves.
+
+0.3.4: **the PC stays awake while something is on the TV** (and its screen on while it's
+shared), and **the keyboard's media keys control the TV** while something is on it.
 
 Earlier: 0.3.3 updates itself; 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
 bar, the TV in the header and the empty-playlist cards; 0.3.0 *Use the TV as a second display*;
