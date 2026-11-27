@@ -21,11 +21,13 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.8
+## What's new in 0.3.9
 
-- **A check for a new version every time Video Caster opens**, in the background a few seconds
-  after the window appears - before, at most once a day. Left open, it still checks once a day.
+- **The check for a new version runs only when Video Caster opens**, in the background a few
+  seconds after the window appears - no timer anymore: a window left open doesn't ask again until
+  you open it again. *Later* hides the update bar until the next opening (it was three days).
 
+0.3.8: a check for a new version every time Video Caster opens (before, at most once a day).
 0.3.7: **Video Caster starts again after an update** (after updating itself it could fail with
 "Failed to load Python DLL" - start it from the Start menu once if that happened), **a Windows
 notification for a new version** besides the bar in the window, and a daily check while it stays
@@ -35,7 +37,7 @@ open.
 of *Second display* off after casting and whenever Windows switches it on by itself (untick
 *Second display: off when it's not cast* to keep it on), and offers to switch the virtual display
 back on if it's off in Device Manager. 0.3.5: the update check works (in 0.3.3 and 0.3.4 it
-could fail with a certificate error: install 0.3.8 by hand once if you have one of those).
+could fail with a certificate error: install 0.3.9 by hand once if you have one of those).
 
 Earlier: 0.3.4 keeps the PC awake while something is on the TV, and the media keys control the
 TV; 0.3.3 updates itself; 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
@@ -136,13 +138,13 @@ Upgrading or uninstalling preserves playlists, settings and watch progress in
 `%LOCALAPPDATA%\Video Caster\`. The installer is unsigned, so Windows may ask you
 to confirm running it.
 
-**Updates install themselves** (from 0.3.3 on): every time Video Caster starts, it checks in the
-background for a new version (and once a day while it stays open). When one is out, a bar in
-the window says so, and (from 0.3.7 on) a Windows notification - once per version; clicking it
-brings the window forward. *Update now* downloads the new Setup from GitHub, checks it against the
+**Updates install themselves** (from 0.3.3 on): every time Video Caster opens, it checks in the
+background for a new version - only then, not on a timer. When one is out, a bar in the window
+says so, and (from 0.3.7 on) a Windows notification - once per version; clicking it brings the
+window forward. *Update now* downloads the new Setup from GitHub, checks it against the
 release's checksums, installs it over the old version - Windows asks for permission - and starts
-Video Caster again. *Later* hides it for three days. The portable executable gets a *Download*
-link to the release page instead.
+Video Caster again. *Later* hides the bar until the next time you open Video Caster. The portable
+executable gets a *Download* link to the release page instead.
 
 ### Windows executable
 
@@ -324,7 +326,7 @@ online subtitle search, the video's file name, size and fingerprint (OpenSubtitl
 are sent to Stremio's subtitle service (`strem.io`) - and to OpenSubtitles.com if you added
 your own API key.
 
-Every time it starts (and once a day while it stays open) the app asks GitHub
+Every time it opens (and only then) the app asks GitHub
 (`api.github.com`) for the newest Video Caster release - only that question, nothing about you
 or your videos. Switch it off with *Updates* in the settings;
 *About Video Caster* (also in the settings) checks right away.

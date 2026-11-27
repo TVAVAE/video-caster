@@ -1264,11 +1264,11 @@ class SettingsPanel(QFrame):
         self.updates.toggled.connect(lambda v: self._changed("check_updates", v, "global"))
         right.addWidget(label("Updates"), 14, 0)
         right.addWidget(self.updates, 14, 1)
-        right.addWidget(HelpButton("Every time Video Caster starts (and once a day while it stays open) it asks "
-                                   "GitHub in the background whether there's a newer version - only that question, "
-                                   "nothing about you or your videos. When there is one, a bar in the window and a "
-                                   "Windows notification offer to install it. 'About Video Caster' checks right "
-                                   "away."), 14, 2)
+        right.addWidget(HelpButton("Every time Video Caster opens it asks GitHub in the background whether "
+                                   "there's a newer version - only that question, nothing about you or your "
+                                   "videos, and only then, not on a timer. When there is one, a bar in the window "
+                                   "and a Windows notification offer to install it ('Later' hides the bar until "
+                                   "the next opening). 'About Video Caster' checks right away."), 14, 2)
         self.tv_off = QCheckBox("Off when it's not cast")
         self.tv_off.toggled.connect(lambda v: self._changed("tv_display_auto_off", v, "global"))
         right.addWidget(label("Second display"), 15, 0)
@@ -1737,11 +1737,9 @@ class MainWindow(QWidget):
         QGuiApplication.instance().screenAdded.connect(lambda _s: QTimer.singleShot(1500, self._tv_display_guard))
         if discover:
             self.discovery.start()
-            # every start: ask GitHub in the background for a newer version (the real app only: tests don't)
-            QTimer.singleShot(3000, lambda: self._auto_check_updates(at_start=True))
-            # left open for days: ask again once a day (the check itself keeps to that)
-            self.update_timer = QTimer(self, interval=3600 * 1000, timeout=self._auto_check_updates)
-            self.update_timer.start()
+            # every start, and only then: ask GitHub in the background for a newer version
+            # (the real app only: tests don't)
+            QTimer.singleShot(3000, self._auto_check_updates)
         worker(self._detect_encoder)
         self._probe_durations()
         self._update_header()
@@ -3907,15 +3905,10 @@ class MainWindow(QWidget):
             self.check_updates(manual=True)
 
     # ----- updates
-    def _auto_check_updates(self, at_start=False):
-        """Is a newer Video Caster out? (if switched on) Every time the app starts, and once a day
-        while it stays open (the hourly timer: GitHub is asked when the last check is a day old)."""
+    def _auto_check_updates(self):
+        """Is a newer Video Caster out? (if switched on) Asked once every time the app starts - no
+        timer, no 'once a day': a window left open doesn't ask again until it's opened again."""
         if not self.state["global"].get("check_updates", True):
-            return
-        if not at_start and time.time() - float(self.state.get("update_checked", 0)) < 20 * 3600:
-            known = self.state.get("update_available")  # found earlier today: offer it again
-            if known and be.version_tuple(known.get("version")) > be.version_tuple(be.APP_VERSION):
-                self._offer_update(known, manual=False)
             return
         self.check_updates(manual=False)
 
@@ -3939,8 +3932,7 @@ class MainWindow(QWidget):
             if manual:
                 QMessageBox.information(self, APP_NAME, f"Couldn't check for updates.\n\n{err}")
             return
-        self.state["update_checked"] = time.time()
-        self.state["update_available"] = info
+        self.state["update_checked"] = time.time()  # only for the record: nothing waits on it
         self.save()
         if not info:
             be.log(f"update check: {be.APP_VERSION} is the newest version")
@@ -3951,9 +3943,7 @@ class MainWindow(QWidget):
         self._offer_update(info, manual)
 
     def _offer_update(self, info, manual):
-        later = self.state.get("update_later") or {}
-        if (not manual and later.get("version") == info["version"] and time.time() < later.get("until", 0)) \
-                or self.update_busy:
+        if self.update_busy:
             return
         self.update_info = info
         installed = be.installed_copy()
@@ -4000,9 +3990,7 @@ class MainWindow(QWidget):
             self.update_tray.hide()
 
     def _update_later(self):
-        if self.update_info:
-            self.state["update_later"] = {"version": self.update_info["version"], "until": time.time() + 3 * 86400}
-            self.save()
+        """Not now: the bar goes away until the next time Video Caster opens (no timer)."""
         self._hide_update_tray()
         self.update_bar.hide()
 

@@ -47,7 +47,7 @@ except Exception:  # pragma: no cover
     NETWORK_IMPORT_ERRORS["airplay"] = traceback.format_exc()
 
 APP_NAME = "Video Caster"
-APP_VERSION = "0.3.8"  # the one place for the version: build-installer.ps1 reads it from here
+APP_VERSION = "0.3.9"  # the one place for the version: build-installer.ps1 reads it from here
 APP_DIR = Path(__file__).resolve().parent
 # A one-file executable extracts its code into a temporary directory. Keep user
 # data outside that directory so upgrades and closing the app cannot erase it.
@@ -169,7 +169,7 @@ GLOBAL_DEFAULTS = {
     "skip_intro": True,        # a series' opening titles (found by comparing episodes): skipped
     "screen_sound": True,      # casting the PC screen: with the PC's sound
     "screen_mirror": True,     # ...to a Chromecast: Google's mirroring (well under a second behind)
-    "check_updates": True,     # once a day: is there a newer Video Caster on GitHub?
+    "check_updates": True,     # at every start: is there a newer Video Caster on GitHub?
     "tv_display_auto_off": True,  # the virtual TV display only on while it's cast (Windows can't put windows there)
     "sub_font": "Sans-serif",  # subtitle font and style: for all videos
     "sub_font_style": "Normal",

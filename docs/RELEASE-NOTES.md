@@ -1,6 +1,6 @@
-Video Caster 0.3.8 for Windows.
+Video Caster 0.3.9 for Windows.
 
-**If you have 0.3.5, 0.3.6 or 0.3.7:** it offers this version by itself - 0.3.7 with a Windows notification, all of them with a bar in the window. Those versions check at most once a day, so it can take until the next day; *About Video Caster* → *Check for updates* checks right away. **If you have 0.3.3 or 0.3.4:** install it by hand once; their update check can fail.
+**If you have 0.3.5 to 0.3.8:** it offers this version by itself - 0.3.7 and 0.3.8 with a Windows notification, all of them with a bar in the window. 0.3.8 asks every time it opens; 0.3.5 to 0.3.7 at most once a day, so it can take until the next day there. *About Video Caster* → *Check for updates* checks right away. **If you have 0.3.3 or 0.3.4:** install it by hand once; their update check can fail.
 
 ## Downloads
 
@@ -12,11 +12,10 @@ Windows 10 or 11, 64-bit. Keep the PC and TV on the same network. The binaries a
 
 ## What's new
 
-- **Video Caster checks for a new version every time it opens**, in the background a few seconds after the window appears, without slowing anything down. Before, it asked GitHub at most once a day, so a version released in the meantime could wait until the next day. Left open, it still checks once a day. When there's a new version you see the bar in the window, and once per version a Windows notification.
+- **The check for a new version runs only when Video Caster opens**, in the background a few seconds after the window appears. 0.3.8 also asked once a day while the window stayed open; that timer is gone, so a window left open doesn't ask again until you open Video Caster again.
+- **Later** hides the update bar until the next opening (it was three days). The Windows notification still comes once per version.
 - The settings' help text for *Updates* and the README say so.
 
-Shown on Windows 11 with the app from the source and a stand-in GitHub on the PC: two openings less than a minute apart each asked for the newest release about 3 seconds after the window appeared; the first showed the bar and a notification, the second the bar.
-
-0.3.7 brought: Video Caster starts again by itself after an update, and a Windows notification for a new version.
+0.3.8 brought: a check for a new version every time the app opens. 0.3.7: Video Caster starts again by itself after an update, and a Windows notification for a new version.
 
 The installer contains the Gyan FFmpeg 9.1 full build. Its GPLv3 license, build configuration, and upstream source reference are included under `ffmpeg` in the installation directory. See the [FFmpeg build provider](https://www.gyan.dev/ffmpeg/builds/) and [corresponding FFmpeg source commit](https://github.com/FFmpeg/FFmpeg/commit/74e4393595). The Virtual Display Driver's license (MIT) is installed as `licenses\VirtualDisplayDriver-LICENSE.txt`.
