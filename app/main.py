@@ -28,7 +28,8 @@ from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication,
                                QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
                                QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-                               QPlainTextEdit, QPushButton, QSizeGrip, QSlider, QStyle, QStyledItemDelegate, QTabBar,
+                               QPlainTextEdit, QPushButton, QSizeGrip, QSlider, QStyle, QStyledItemDelegate,
+                               QSystemTrayIcon, QTabBar,
                                QToolButton, QToolTip, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
                                QWidgetAction)
 
@@ -1735,6 +1736,9 @@ class MainWindow(QWidget):
         if discover:
             self.discovery.start()
             QTimer.singleShot(8000, self._auto_check_updates)  # (the real app only: tests don't ask GitHub)
+            # left open for days: ask again once a day (the check itself keeps to that)
+            self.update_timer = QTimer(self, interval=3600 * 1000, timeout=self._auto_check_updates)
+            self.update_timer.start()
         worker(self._detect_encoder)
         self._probe_durations()
         self._update_header()
@@ -1897,6 +1901,7 @@ class MainWindow(QWidget):
         self.update_bar.hide()
         root.addWidget(self.update_bar)
         self.update_info, self.update_busy, self.update_stop = None, False, None
+        self.update_tray = None  # the notification-area icon behind the 'new version' notification
         self.update_go.clicked.connect(self._update_go)
         self.update_later.clicked.connect(self._update_later)
 
@@ -2060,6 +2065,7 @@ class MainWindow(QWidget):
             self.tv_display = None
         self._set_media_keys(False)
         be.keep_awake()  # Windows may sleep as usual
+        self._hide_update_tray()
         self.settings_panel.hide()
         self.save()
         # Saying goodbye to the TV and stopping the TV search can take long: a TV the app
@@ -3956,11 +3962,44 @@ class MainWindow(QWidget):
         self.update_later.setText("Later")
         self.update_later.show()
         self.update_bar.show()
+        if not manual:
+            self._notify_update(info)
+
+    def _notify_update(self, info):
+        """A Windows notification about a new version (once per version), so it's seen with the
+        window in the background too; clicking it brings the window with the update bar forward."""
+        if self.state.get("update_notified") == info["version"] or not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        if self.update_tray is None:
+            self.update_tray = QSystemTrayIcon(app_icon(), self)
+            self.update_tray.messageClicked.connect(self._show_update_from_tray)
+            self.update_tray.activated.connect(lambda _reason: self._show_update_from_tray())
+        title = f"{APP_NAME} {info['version']} is available"
+        self.update_tray.setToolTip(title)
+        self.update_tray.show()
+        self.update_tray.showMessage(title, "Click here, then 'Update now'. Your playlists and settings stay.",
+                                     app_icon(), 30000)
+        self.state["update_notified"] = info["version"]
+        self.save()
+        be.log(f"update: notification about {info['version']} shown")
+
+    def _show_update_from_tray(self):
+        self._hide_update_tray()
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _hide_update_tray(self):
+        if self.update_tray is not None:
+            self.update_tray.hide()
 
     def _update_later(self):
         if self.update_info:
             self.state["update_later"] = {"version": self.update_info["version"], "until": time.time() + 3 * 86400}
             self.save()
+        self._hide_update_tray()
         self.update_bar.hide()
 
     def _update_go(self):
@@ -3979,6 +4018,7 @@ class MainWindow(QWidget):
                 self, APP_NAME, "Updating closes Video Caster for a moment, which stops what's on the TV. "
                                 "Update now?") != QMessageBox.Yes:
             return
+        self._hide_update_tray()
         self.update_busy, self.update_stop = True, threading.Event()
         self.update_go.setText("Cancel")
         self.update_later.hide()

@@ -21,17 +21,20 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.6
+## What's new in 0.3.7
 
-- **The TV display is only on while it's cast**: the extra screen of *Second display* could stay
-  on, so windows and the mouse ended up on a screen nobody sees. Video Caster now switches it
-  off after casting, and whenever Windows switches it on by itself (plugging in a monitor,
-  docking). To keep it on, untick *Second display: off when it's not cast* in the settings.
-- **The virtual display switched off in Device Manager?** *Second display* offers to switch it
-  back on, instead of installing it again. You don't need to keep it off yourself.
+- **Video Caster starts again after an update**: after updating itself, it could fail to start
+  with "Failed to load Python DLL" (the update itself was installed). Start it from the Start
+  menu once if that happened; the update to 0.3.7 and later ones start it again by themselves.
+- **A Windows notification for a new version**, besides the bar in the window - so you see it
+  with Video Caster in the background too. Click it, then *Update now*.
+- **Left open for days, it still checks once a day** (before, only when it started).
 
-0.3.5: **the update check works** - in 0.3.3 and 0.3.4 it could fail with a certificate error.
-If you have one of those, install 0.3.6 by hand once; from then on updates come by themselves.
+0.3.6: **the TV display is only on while it's cast** - Video Caster switches the extra screen
+of *Second display* off after casting and whenever Windows switches it on by itself (untick
+*Second display: off when it's not cast* to keep it on), and offers to switch the virtual display
+back on if it's off in Device Manager. 0.3.5: the update check works (in 0.3.3 and 0.3.4 it
+could fail with a certificate error: install 0.3.7 by hand once if you have one of those).
 
 Earlier: 0.3.4 keeps the PC awake while something is on the TV, and the media keys control the
 TV; 0.3.3 updates itself; 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
@@ -92,7 +95,8 @@ bar, the TV in the header and the empty-playlist cards; 0.3.0 *Use the TV as a s
   windows there and keep working on your own screen.
 
 **Updates**
-- Tells you when a new version is out, and installs it with one click (see
+- Tells you when a new version is out (a bar in the window and a Windows notification), and
+  installs it with one click (see
   [Windows installer](#windows-installer)). Can be switched off in the settings.
 
 **TVs**
@@ -132,10 +136,11 @@ Upgrading or uninstalling preserves playlists, settings and watch progress in
 to confirm running it.
 
 **Updates install themselves** (from 0.3.3 on): when a new version is out, a bar in the window
-says so. *Update now* downloads the new Setup from GitHub, checks it against the release's
-checksums, installs it over the old version - Windows asks for permission - and starts Video
-Caster again. *Later* hides it for three days. The portable executable gets a *Download* link
-to the release page instead.
+says so, and (from 0.3.7 on) a Windows notification - once per version; clicking it brings the
+window forward. *Update now* downloads the new Setup from GitHub, checks it against the
+release's checksums, installs it over the old version - Windows asks for permission - and starts
+Video Caster again. *Later* hides it for three days. The portable executable gets a *Download*
+link to the release page instead.
 
 ### Windows executable
 
@@ -317,8 +322,9 @@ online subtitle search, the video's file name, size and fingerprint (OpenSubtitl
 are sent to Stremio's subtitle service (`strem.io`) - and to OpenSubtitles.com if you added
 your own API key.
 
-Once a day the app asks GitHub (`api.github.com`) for the newest Video Caster release - only
-that question, nothing about you or your videos. Switch it off with *Updates* in the settings;
+Once a day (when it starts, and every day it stays open) the app asks GitHub
+(`api.github.com`) for the newest Video Caster release - only that question, nothing about you
+or your videos. Switch it off with *Updates* in the settings;
 *About Video Caster* (also in the settings) checks right away.
 
 ## Third-party components
@@ -376,6 +382,9 @@ instead of `app/`.
   screen only*, or Win+Shift+← to bring a window back.
 - **Playback stutters** - run the *Speed Test*, or set *Quality* lower. On a weak connection the
   app switches to adaptive streaming by itself.
+- **"Failed to load Python DLL" right after an update** - the update was installed, only
+  starting again failed (updates to 0.3.6 and earlier). Start Video Caster from the Start menu;
+  from 0.3.7 on it starts again by itself.
 - **The window doesn't appear** - it opens where it was last closed; since 0.2.0 it moves back
   to your main screen when that spot is on a monitor that's no longer connected.
 - **An old icon on the desktop after upgrading** - Windows keeps showing the icon it stored for

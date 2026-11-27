@@ -54,8 +54,9 @@ Source: "..\app\assets\videocaster.ico"; DestDir: "{app}"; DestName: "VideoCaste
 Source: "..\third_party\VirtualDisplayDriver\LICENSE"; DestDir: "{app}\licenses"; DestName: "VirtualDisplayDriver-LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Video Caster"; Filename: "{app}\VideoCaster.exe"; IconFilename: "{app}\VideoCaster.ico"
-Name: "{autodesktop}\Video Caster"; Filename: "{app}\VideoCaster.exe"; IconFilename: "{app}\VideoCaster.ico"; Tasks: desktopicon
+; AppUserModelID: the app's own ID (main.py), so Windows names its notifications "Video Caster"
+Name: "{group}\Video Caster"; Filename: "{app}\VideoCaster.exe"; IconFilename: "{app}\VideoCaster.ico"; AppUserModelID: "VideoCaster.App"
+Name: "{autodesktop}\Video Caster"; Filename: "{app}\VideoCaster.exe"; IconFilename: "{app}\VideoCaster.ico"; AppUserModelID: "VideoCaster.App"; Tasks: desktopicon
 
 [Run]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Video Caster - Private TCP"" program=""{app}\VideoCaster.exe"""; Flags: runhidden; Check: IsAdminInstallMode
@@ -64,8 +65,9 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""V
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Video Caster - Private UDP"" dir=in action=allow program=""{app}\VideoCaster.exe"" enable=yes profile=private remoteip=localsubnet protocol=UDP"; Flags: runhidden; Tasks: privatefirewall; Check: IsAdminInstallMode
 Filename: "{app}\VideoCaster.exe"; Parameters: "--install-display-driver ""{tmp}\virtual-display.json"""; StatusMsg: "Installing the virtual display..."; Flags: runhidden waituntilterminated; Tasks: virtualdisplay; Check: IsAdminInstallMode
 Filename: "{app}\VideoCaster.exe"; Description: "Launch Video Caster"; Flags: nowait postinstall skipifsilent runasoriginaluser
-; an update from inside the app (/SILENT /RESTARTAPP=1): start Video Caster again when it's done
-Filename: "{app}\VideoCaster.exe"; Flags: nowait runasoriginaluser; Check: RestartRequested
+; an update from inside the app (/SILENT /RESTARTAPP=1): start Video Caster again when it's done -
+; through PowerShell, which first drops what this Setup inherited from the old copy (see RestartCommand)
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -Command ""{code:RestartCommand}"""; Flags: nowait runhidden runasoriginaluser; Check: RestartRequested
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Video Caster - Private TCP"" program=""{app}\VideoCaster.exe"""; Flags: runhidden; Check: IsAdminInstallMode; RunOnceId: RemovePrivateTCP
@@ -76,7 +78,32 @@ Filename: "{app}\VideoCaster.exe"; Parameters: "--uninstall-display-driver -"; F
 ; User playlists and watch progress live outside {app}; uninstall preserves them.
 
 [Code]
+function SetEnvironmentVariable(lpName, lpValue: String): BOOL;
+  external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
+{ Started by Video Caster's updater (0.3.6 and earlier), Setup inherits the old copy's notes about
+  its temporary _MEI folder (PyInstaller's _PYI_* variables). A Video Caster started from here would
+  look for Python in that folder - deleted once the old copy closed: "Failed to load Python DLL".
+  PYINSTALLER_RESET_ENVIRONMENT=1 makes it start afresh. }
+function InitializeSetup: Boolean;
+begin
+  SetEnvironmentVariable('PYINSTALLER_RESET_ENVIRONMENT', '1');
+  Result := True;
+end;
+
 function RestartRequested: Boolean;
 begin
   Result := WizardSilent and (ExpandConstant('{param:restartapp|0}') = '1');
+end;
+
+{ The restart runs as the original user, from the Setup process the updater started - which still
+  has the inherited variables, so the command sets the reset itself. }
+function RestartCommand(Param: String): String;
+var
+  Exe: String;
+begin
+  Exe := ExpandConstant('{app}\VideoCaster.exe');
+  StringChangeEx(Exe, '''', '''''', True);
+  Result := '$env:PYINSTALLER_RESET_ENVIRONMENT=''1''; Get-ChildItem Env:_PYI_* | Remove-Item; ' +
+            'Start-Process -FilePath ''' + Exe + '''';
 end;

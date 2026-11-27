@@ -47,7 +47,7 @@ except Exception:  # pragma: no cover
     NETWORK_IMPORT_ERRORS["airplay"] = traceback.format_exc()
 
 APP_NAME = "Video Caster"
-APP_VERSION = "0.3.6"  # the one place for the version: build-installer.ps1 reads it from here
+APP_VERSION = "0.3.7"  # the one place for the version: build-installer.ps1 reads it from here
 APP_DIR = Path(__file__).resolve().parent
 # A one-file executable extracts its code into a temporary directory. Keep user
 # data outside that directory so upgrades and closing the app cannot erase it.
@@ -4276,6 +4276,16 @@ def download_update(info, progress=None, stop=None):
     return dest
 
 
+def fresh_app_env():
+    """The environment for a program that may start Video Caster again (Setup). The one-file app
+    runs from a temporary _MEI folder and notes it in _PYI_* variables; a Video Caster that
+    inherits them looks for Python in that folder - deleted once this copy has closed ('Failed to
+    load Python DLL'). PYINSTALLER_RESET_ENVIRONMENT makes it start afresh."""
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("_PYI_")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
 def start_installer(setup_path):
     """Start the new Setup quietly as an upgrade of this installation (Windows asks for permission
     when it's installed for all users); it starts Video Caster again when it's done."""
@@ -4283,5 +4293,5 @@ def start_installer(setup_path):
     per_user = str(here).lower().startswith(str(Path(os.environ.get("LOCALAPPDATA", "~")).resolve()).lower())
     args = [str(setup_path), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/RESTARTAPP=1",
             "/CURRENTUSER" if per_user else "/ALLUSERS"]
-    subprocess.Popen(args, close_fds=True)
+    subprocess.Popen(args, close_fds=True, env=fresh_app_env())
     log(f"update: started {Path(setup_path).name} ({'for this user' if per_user else 'for all users'})")
