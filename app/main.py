@@ -1266,7 +1266,16 @@ class SettingsPanel(QFrame):
         right.addWidget(HelpButton("Once a day Video Caster asks GitHub whether there's a newer version - only that "
                                    "question, nothing about you or your videos. When there is one, a bar in the "
                                    "window offers to install it. 'About Video Caster' checks right away."), 14, 2)
-        right.setRowStretch(15, 1)
+        self.tv_off = QCheckBox("Off when it's not cast")
+        self.tv_off.toggled.connect(lambda v: self._changed("tv_display_auto_off", v, "global"))
+        right.addWidget(label("Second display"), 15, 0)
+        right.addWidget(self.tv_off, 15, 1)
+        right.addWidget(HelpButton("The extra screen of 'Second display' is only on while it's cast: Video Caster "
+                                   "switches it off afterwards, and whenever Windows switches it on by itself (for "
+                                   "example when you plug in a monitor). So windows never end up on a screen nobody "
+                                   "sees. Untick it if you use the virtual display for something else too."), 15, 2)
+        right.setRowStretch(15, 0)
+        right.setRowStretch(16, 1)
         btns = QHBoxLayout()
         about = QPushButton(f"About {APP_NAME}")
         about.clicked.connect(self.win.show_about)
@@ -1274,7 +1283,7 @@ class SettingsPanel(QFrame):
         trouble.clicked.connect(self.win.show_troubleshooting)
         btns.addWidget(about)
         btns.addWidget(trouble)
-        right.addLayout(btns, 16, 0, 1, 3)
+        right.addLayout(btns, 17, 0, 1, 3)
         right.setColumnStretch(1, 1)
 
         # ---- footer
@@ -1344,6 +1353,7 @@ class SettingsPanel(QFrame):
             self.up_next.setChecked(bool(gs.get("up_next", True)))
             self.skip_intro.setChecked(bool(gs.get("skip_intro", True)))
             self.updates.setChecked(bool(gs.get("check_updates", True)))
+            self.tv_off.setChecked(bool(gs.get("tv_display_auto_off", True)))
             self._enable(bool(path))
         finally:
             self.loading = False
@@ -1719,6 +1729,9 @@ class MainWindow(QWidget):
         self.poll = QTimer(self, interval=500, timeout=self._poll)
         self.poll.start()
         self._shortcuts()
+        # the TV display only while it's cast: off now if Windows left it on, and whenever a screen appears
+        QTimer.singleShot(2500, self._tv_display_guard)
+        QGuiApplication.instance().screenAdded.connect(lambda _s: QTimer.singleShot(1500, self._tv_display_guard))
         if discover:
             self.discovery.start()
             QTimer.singleShot(8000, self._auto_check_updates)  # (the real app only: tests don't ask GitHub)
@@ -2041,7 +2054,8 @@ class MainWindow(QWidget):
         self.server.stop_transcodes()  # quick: every conversion and screen capture ends now
         if self.screen is not None and self.screen.get("mirror") is not None:
             self.screen["mirror"].close()  # (the goodbye below closes the receiver on the TV)
-        if self.tv_display is not None and self.tv_display["ours"]:
+        if self.tv_display is not None and (self.tv_display["ours"]
+                                            or self.state["global"].get("tv_display_auto_off", True)):
             self._safe(be.detach_virtual_display)  # no windows left on a screen nobody sees
             self.tv_display = None
         self._set_media_keys(False)
@@ -2378,8 +2392,10 @@ class MainWindow(QWidget):
         """Apply a settings change to what is playing: the subtitles' look (size, colour,
         font) changes live on the TV; anything that changes the stream restarts it at the
         current position (burned-in subtitles are part of the picture, so they restart too)."""
-        if key == "check_updates":  # nothing to do with what plays
+        if key in ("check_updates", "tv_display_auto_off"):  # nothing to do with what plays
             self.save()
+            if key == "tv_display_auto_off":
+                self._tv_display_guard()
             return
         if self.player is None or not self.now_path or (path and path != self.now_path):
             return
@@ -2589,7 +2605,14 @@ class MainWindow(QWidget):
             self.connect_device(dev, then=self.cast_tv_display)
             return
         vd = be.virtual_display()
-        if vd is None:
+        dev = be.vdd_device() if vd is None else None
+        if dev is not None and dev["disabled"]:  # switched off in Device Manager: on again, not a 2nd copy
+            if QMessageBox.question(
+                    self, APP_NAME, "The virtual display for 'Second display' is switched off in Device Manager.\n\n"
+                    "Switch it back on? Windows asks for permission. Video Caster then keeps the TV display off "
+                    "whenever it isn't cast, so windows don't end up on it.") != QMessageBox.Yes:
+                return
+        elif vd is None:
             if be.display_driver_files() is None:
                 QMessageBox.information(self, APP_NAME, "Using the TV as a second display needs the Virtual Display "
                                         "Driver, which this copy of Video Caster doesn't include.\n\nUse the Video "
@@ -2604,7 +2627,8 @@ class MainWindow(QWidget):
                     "only this once.\n\nInstall it now?") != QMessageBox.Yes:
                 return
         self.tv_display_busy = True
-        self.flash("Installing the virtual display..." if vd is None else "Switching the TV display on...", 60)
+        self.flash("Switching the virtual display back on..." if dev is not None and dev["disabled"] else
+                   "Installing the virtual display..." if vd is None else "Switching the TV display on...", 60)
 
         def work():
             try:
@@ -2662,10 +2686,26 @@ class MainWindow(QWidget):
         QMessageBox.warning(self, APP_NAME, f"Couldn't switch the TV display on.\n\n{msg}")
 
     def _tv_display_off(self):
-        """Casting ended: switch the TV display off again if Video Caster switched it on."""
+        """Casting ended: switch the TV display off again (if Video Caster switched it on, or it's
+        only to be on while cast - the setting)."""
         tvd, self.tv_display = self.tv_display, None
-        if tvd is not None and tvd["ours"]:
+        if tvd is not None and (tvd["ours"] or self.state["global"].get("tv_display_auto_off", True)):
             worker(be.detach_virtual_display)
+
+    def _tv_display_guard(self):
+        """The TV display only while it's cast: switch it off when it's on and nothing casts it -
+        Windows switches displays on by itself (a monitor plugged in, docking, Win+P 'Extend')."""
+        if not self.state["global"].get("tv_display_auto_off", True) or self.tv_display_busy \
+                or self.tv_display is not None:
+            return
+
+        def work():
+            vd = be.virtual_display()
+            if vd and vd["attached"] and not self.tv_display_busy and self.tv_display is None:
+                be.detach_virtual_display()
+                be.log("TV display: switched off - it's only on while it's cast")
+
+        worker(work)
 
     def cast_screen(self, index=0, allow_mirror=True):
         """Show this PC's screen (and play its sound) on the TV, live, until Stop."""

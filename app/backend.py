@@ -47,7 +47,7 @@ except Exception:  # pragma: no cover
     NETWORK_IMPORT_ERRORS["airplay"] = traceback.format_exc()
 
 APP_NAME = "Video Caster"
-APP_VERSION = "0.3.5"  # the one place for the version: build-installer.ps1 reads it from here
+APP_VERSION = "0.3.6"  # the one place for the version: build-installer.ps1 reads it from here
 APP_DIR = Path(__file__).resolve().parent
 # A one-file executable extracts its code into a temporary directory. Keep user
 # data outside that directory so upgrades and closing the app cannot erase it.
@@ -170,6 +170,7 @@ GLOBAL_DEFAULTS = {
     "screen_sound": True,      # casting the PC screen: with the PC's sound
     "screen_mirror": True,     # ...to a Chromecast: Google's mirroring (well under a second behind)
     "check_updates": True,     # once a day: is there a newer Video Caster on GitHub?
+    "tv_display_auto_off": True,  # the virtual TV display only on while it's cast (Windows can't put windows there)
     "sub_font": "Sans-serif",  # subtitle font and style: for all videos
     "sub_font_style": "Normal",
 }
@@ -2389,6 +2390,24 @@ def _display_mode(name):
     return dm.dmPositionX, dm.dmPositionY, dm.dmPelsWidth, dm.dmPelsHeight, dm.dmDisplayFrequency
 
 
+def vdd_device():
+    """The virtual display's device, also when it's switched off in Device Manager (then Windows
+    doesn't list its display at all): {id, ok, disabled}, or None if it isn't installed."""
+    if sys.platform != "win32":
+        return None
+    ps = ("$d = Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains "
+          f"'{VDD_HWID}' }} | Select-Object -First 1; if ($d) {{ $d.InstanceId + '|' + $d.Status + '|' + $d.Problem }}")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True,
+                             text=True, timeout=30, creationflags=NO_WINDOW).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not out:
+        return None
+    dev_id, status, problem = (out.split("|") + ["", ""])[:3]
+    return {"id": dev_id, "ok": status == "OK", "disabled": "DISABLED" in problem.upper()}
+
+
 def virtual_display():
     """The virtual display for the TV, if its driver is installed: {name, attached, rect=(x, y, w, h)}."""
     for name, desc, hwid, attached in _display_devices():
@@ -2526,6 +2545,18 @@ def install_display_driver_elevated(result_path):
             raise RuntimeError(f"{name} failed (Windows error {err})")
 
     try:
+        existing = vdd_device()
+        created = existing is None
+        if existing is not None and existing["disabled"]:  # switched off in Device Manager: on again
+            r = subprocess.run(["pnputil", "/enable-device", existing["id"]], capture_output=True, text=True,
+                               timeout=120, creationflags=NO_WINDOW)
+            step("switch the device back on", r.returncode == 0)
+            time.sleep(2)
+            if virtual_display() is not None:  # its driver is still there: nothing to copy or install
+                out.update(ok=True, reboot=False, enabled=True, ours=(VDD_SETTINGS_DIR / VDD_MARKER).exists())
+                if result_path and result_path != "-":
+                    Path(result_path).write_text(json.dumps(out), encoding="utf-8")
+                return out
         src = display_driver_files()
         if src is None:
             raise RuntimeError("this copy of Video Caster doesn't include the driver")
@@ -2558,7 +2589,6 @@ def install_display_driver_elevated(result_path):
         setupapi.SetupDiDestroyDeviceInfoList.argtypes = [HDEVINFO]
         newdev.UpdateDriverForPlugAndPlayDevicesW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR,
                                                               wintypes.DWORD, ctypes.POINTER(wintypes.BOOL)]
-        created = virtual_display() is None
         if created:  # no device yet: create it (else only the driver is updated)
             cls, cname = GUID(), ctypes.create_unicode_buffer(256)
             step("read the driver's device class", setupapi.SetupDiGetINFClassW(inf, byref(cls), cname, 256, None))

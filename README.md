@@ -21,16 +21,20 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.5
+## What's new in 0.3.6
 
-- **The update check works**: in 0.3.3 and 0.3.4 it could fail with a certificate error
-  ("unable to get issuer certificate"), so no update was offered. The subtitle search could hit
-  the same error. Install 0.3.5 by hand once; from then on updates come by themselves.
+- **The TV display is only on while it's cast**: the extra screen of *Second display* could stay
+  on, so windows and the mouse ended up on a screen nobody sees. Video Caster now switches it
+  off after casting, and whenever Windows switches it on by itself (plugging in a monitor,
+  docking). To keep it on, untick *Second display: off when it's not cast* in the settings.
+- **The virtual display switched off in Device Manager?** *Second display* offers to switch it
+  back on, instead of installing it again. You don't need to keep it off yourself.
 
-0.3.4: **the PC stays awake while something is on the TV** (and its screen on while it's
-shared), and **the keyboard's media keys control the TV** while something is on it.
+0.3.5: **the update check works** - in 0.3.3 and 0.3.4 it could fail with a certificate error.
+If you have one of those, install 0.3.6 by hand once; from then on updates come by themselves.
 
-Earlier: 0.3.3 updates itself; 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
+Earlier: 0.3.4 keeps the PC awake while something is on the TV, and the media keys control the
+TV; 0.3.3 updates itself; 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
 bar, the TV in the header and the empty-playlist cards; 0.3.0 *Use the TV as a second display*;
 0.2.1 low-delay screen mirroring; 0.2.0 *Cast your screen*. All versions and downloads:
 [releases](https://github.com/TVAVAE/video-caster/releases).
@@ -246,9 +250,13 @@ to the right of yours that shows on the TV: move the mouse past the right edge o
 drag windows there (or press Win+Shift+→), and keep working on your own screen. It's 1920 x 1080
 and, on a Chromecast or Google TV, a fraction of a second behind.
 
-- The extra screen exists only while it's cast: *Stop* (or playing a video) switches it off,
-  and its windows come back to your own screen. If you set up such a screen yourself, Video
-  Caster casts it and leaves it as it is.
+- The extra screen is only on while it's cast: *Stop* (or playing a video) switches it off,
+  and its windows come back to your own screen. Windows sometimes switches it on by itself
+  (plugging in a monitor, docking, Win+P *Extend*); Video Caster then switches it off again
+  while it runs. If you use the virtual display for something else too, untick *Second
+  display: off when it's not cast* in the settings.
+- If the driver is switched off in Device Manager, *Second display* offers to switch it back on
+  (Windows asks once) - you don't need to keep it off yourself.
 - Windows extends the desktop only onto displays it knows, so this needs a **virtual display**.
   Video Caster includes the free, open-source
   [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT
@@ -362,9 +370,10 @@ instead of `app/`.
   TV didn't accept mirroring; the log says why.
 - **Mirroring stutters or freezes** - switch *Low delay* off: the video stream is
   further behind but copes better with weak Wi-Fi.
-- **Windows or the mouse vanish to the right** - an extra screen is still on (e.g. a virtual
-  display you set up yourself). Press Win+P and choose *PC screen only*, or Win+Shift+← to bring
-  a window back.
+- **Windows or the mouse vanish to the right** - an extra screen is still on: a virtual display
+  switched on while Video Caster wasn't running (it switches it off when it starts), or one
+  kept on with *Second display: off when it's not cast* unticked. Press Win+P and choose *PC
+  screen only*, or Win+Shift+← to bring a window back.
 - **Playback stutters** - run the *Speed Test*, or set *Quality* lower. On a weak connection the
   app switches to adaptive streaming by itself.
 - **The window doesn't appear** - it opens where it was last closed; since 0.2.0 it moves back

@@ -1,6 +1,6 @@
-Video Caster 0.3.5 for Windows.
+Video Caster 0.3.6 for Windows.
 
-**If you have 0.3.3 or 0.3.4: install this version by hand once.** Their update check can fail (see below), so they may not offer it themselves. From 0.3.5 on, updates come by themselves.
+**If you have 0.3.5:** it offers this version by itself - a bar in the window, or *About Video Caster* → *Check for updates*. **If you have 0.3.3 or 0.3.4:** install it by hand once; their update check can fail.
 
 ## Downloads
 
@@ -12,11 +12,12 @@ Windows 10 or 11, 64-bit. Keep the PC and TV on the same network. The binaries a
 
 ## What's fixed
 
-- **The update check works**: *Check for updates* could fail with "certificate verify failed: unable to get issuer certificate", so no update was offered. The cause: the app checked secure connections only against Windows' certificate store. That store can lack the root certificate some of GitHub's connections end at, because Windows fetches such certificates only for its own programs. Video Caster now also uses the standard certifi list of trusted certificates (Mozilla's), for the update check and download as well as the online subtitle search, which could hit the same error.
-- For diagnosing: `VideoCaster.exe --check-update report.json` runs the update check from a command line and writes the outcome to a file.
+- **The TV display is only on while it's cast.** The extra screen that *Second display* casts could stay on when nothing was cast - for instance when it was set up by hand, or when Windows switched it on by itself after docking or plugging in a monitor. Windows and the mouse then ended up on a screen nobody sees. Video Caster now switches it off after casting, when it starts, and within seconds whenever Windows switches it on while it runs.
+- **New setting: *Second display: off when it's not cast*** (on by default). Untick it if you use the virtual display for something else too; Video Caster then leaves it as it is.
+- **A virtual display switched off in Device Manager**: *Second display* offers to switch it back on (Windows asks for permission once), instead of trying to install a second copy. Switching it back on doesn't touch its files in `C:\VirtualDisplayDriver`.
 
-0.3.4 brought: the PC stays awake while something is on the TV, and the keyboard's media keys control the TV.
+Tested on Windows 11 with the Virtual Display Driver: switched on from outside, the way Windows does it, at start and while the app runs - each time off again within seconds; with the setting unticked it stays on; *Second display* still casts it and switches it off at *Stop*.
 
-The fixed check was run from the built program itself, several times in a row, against GitHub.
+0.3.5 brought: the update check works (it could fail with a certificate error in 0.3.3 and 0.3.4).
 
 The installer contains the Gyan FFmpeg 9.1 full build. Its GPLv3 license, build configuration, and upstream source reference are included under `ffmpeg` in the installation directory. See the [FFmpeg build provider](https://www.gyan.dev/ffmpeg/builds/) and [corresponding FFmpeg source commit](https://github.com/FFmpeg/FFmpeg/commit/74e4393595). The Virtual Display Driver's license (MIT) is installed as `licenses\VirtualDisplayDriver-LICENSE.txt`.
