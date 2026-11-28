@@ -21,13 +21,14 @@ screen on the TV, with its sound.
   <img src="docs/window.png" alt="Video Caster's window: a series episode playing on Living Room TV (shown in the header with a green dot), with the 'Skipping intro' countdown and the next episode suggested under the playlist" width="490">
 </p>
 
-## What's new in 0.3.9
+## What's new in 0.3.10
 
-- **The check for a new version runs only when Video Caster opens**, in the background a few
-  seconds after the window appears - no timer anymore: a window left open doesn't ask again until
-  you open it again. *Later* hides the update bar until the next opening (it was three days).
+- **One window**: starting Video Caster while it's already open brings the open window forward
+  (videos you started it with are added there) instead of opening a second copy. Two copies saved
+  over each other's playlists, watch progress and settings - and the update check's result.
 
-0.3.8: a check for a new version every time Video Caster opens (before, at most once a day).
+0.3.9: the check for a new version runs only when Video Caster opens - no timer; *Later* hides
+the update bar until the next opening. 0.3.8: a check for a new version every time Video Caster opens (before, at most once a day).
 0.3.7: **Video Caster starts again after an update** (after updating itself it could fail with
 "Failed to load Python DLL" - start it from the Start menu once if that happened), **a Windows
 notification for a new version** besides the bar in the window, and a daily check while it stays
@@ -37,7 +38,7 @@ open.
 of *Second display* off after casting and whenever Windows switches it on by itself (untick
 *Second display: off when it's not cast* to keep it on), and offers to switch the virtual display
 back on if it's off in Device Manager. 0.3.5: the update check works (in 0.3.3 and 0.3.4 it
-could fail with a certificate error: install 0.3.9 by hand once if you have one of those).
+could fail with a certificate error: install 0.3.10 by hand once if you have one of those).
 
 Earlier: 0.3.4 keeps the PC awake while something is on the TV, and the media keys control the
 TV; 0.3.3 updates itself; 0.3.2 can install the virtual display in Setup; 0.3.1 brought the share panel, the live
@@ -101,6 +102,11 @@ bar, the TV in the header and the empty-playlist cards; 0.3.0 *Use the TV as a s
 - Tells you when a new version is out (a bar in the window and a Windows notification), and
   installs it with one click (see
   [Windows installer](#windows-installer)). Can be switched off in the settings.
+
+**One window**
+- Starting Video Caster while it's already open brings the open window forward (videos you
+  started it with are added there), so two copies can't save over each other's playlists,
+  watch progress and settings.
 
 **TVs**
 - Chromecast, Google TV and TVs with Chromecast built-in - found automatically on your network.

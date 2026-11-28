@@ -7,6 +7,7 @@ panel for audio, subtitles and conversion. The engine is in backend.py."""
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -24,6 +25,7 @@ from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, Q
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QKeySequence,  # noqa: E402
                            QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QShortcut,
                            QGuiApplication)
+from PySide6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QButtonGroup,  # noqa: E402
                                QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
@@ -1903,6 +1905,7 @@ class MainWindow(QWidget):
         root.addWidget(self.update_bar)
         self.update_info, self.update_busy, self.update_stop = None, False, None
         self.update_tray = None  # the notification-area icon behind the 'new version' notification
+        self.instance_server = None  # where a second start of Video Caster finds this window
         self.update_go.clicked.connect(self._update_go)
         self.update_later.clicked.connect(self._update_later)
 
@@ -2054,6 +2057,9 @@ class MainWindow(QWidget):
         self._update_header()
 
     def closeEvent(self, e):
+        if self.instance_server is not None:  # first: a start from now on is a new window, not this one
+            self.instance_server.close()
+            self.instance_server = None
         self._save_resume()
         self.preparer.cancel()  # don't leave ffmpeg running after the app closes
         self.screen_timer.stop()
@@ -3979,11 +3985,64 @@ class MainWindow(QWidget):
 
     def _show_update_from_tray(self):
         self._hide_update_tray()
+        self.bring_forward()
+
+    def bring_forward(self):
+        """The window in front (also from minimized), for a notification click or a second start."""
         if self.isMinimized():
             self.showNormal()
         self.show()
         self.raise_()
         self.activateWindow()
+        if sys.platform == "win32":  # Qt alone may only flash the taskbar button
+            try:
+                import ctypes
+                ctypes.windll.user32.SetForegroundWindow(int(self.winId()))
+            except Exception:
+                pass
+
+    # ----- one window: a second start hands over to this one
+    def listen_for_second_start(self, name):
+        """Two copies with the same settings file save over each other's playlists, progress and
+        settings, so a second start of Video Caster asks this window to come forward (with the
+        videos it was started with) and closes. Only this Windows user can reach it."""
+        server = QLocalServer(self)
+        server.setSocketOptions(QLocalServer.UserAccessOption)
+        if not server.listen(name):
+            QLocalServer.removeServer(name)  # left behind by a copy that crashed
+            if not server.listen(name):
+                be.log(f"one window: can't wait for a second start ({server.errorString()})")
+                return
+        server.newConnection.connect(self._second_start)
+        self.instance_server = server
+
+    def _second_start(self):
+        server = self.instance_server
+        while server is not None and server.hasPendingConnections():
+            sock = server.nextPendingConnection()
+            buf = bytearray()
+
+            def read(sock=sock, buf=buf):
+                buf.extend(bytes(sock.readAll()))
+                if not buf.endswith(b"\n"):
+                    return
+                try:
+                    msg = json.loads(buf.decode("utf-8"))
+                except ValueError:
+                    msg = {}
+                buf.clear()
+                sock.write(b"ok\n")
+                sock.flush()
+                files = [f for f in (msg.get("files") or []) if isinstance(f, str)]
+                be.log("second start: the open window came forward" + (f", {len(files)} item(s) added" if files else ""))
+                self.bring_forward()
+                if files:
+                    self.add_paths(files)
+
+            sock.readyRead.connect(read)
+            sock.disconnected.connect(sock.deleteLater)
+            if sock.bytesAvailable():
+                read()
 
     def _hide_update_tray(self):
         if self.update_tray is not None:
@@ -4087,6 +4146,77 @@ class MainWindow(QWidget):
         dlg.exec()
 
 
+def instance_name(state_path):
+    """One window per settings file: the name a second start looks for (a hash of the file's path,
+    which is in the user's own folder, so other users on this PC have their own)."""
+    key = os.path.normcase(os.path.abspath(state_path))
+    return "VideoCaster-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:20]
+
+
+def hand_over(name, files):
+    """Is Video Caster already open with these settings? Then ask it to come forward and add
+    `files`. True when it answered: this start then ends. A window that doesn't answer within a
+    few seconds (busy, or closing) doesn't stop this one."""
+    sock = QLocalSocket()
+    sock.connectToServer(name)
+    if not sock.waitForConnected(1000):
+        return False
+    if sys.platform == "win32":  # Windows lets the program just started hand the foreground on
+        try:
+            import ctypes
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
+        except Exception:
+            pass
+    msg = {"files": [os.path.abspath(f) for f in files]}
+    sock.write(json.dumps(msg).encode("utf-8") + b"\n")
+    if not sock.waitForBytesWritten(2000):
+        return False
+    reply = bytearray()
+    deadline = time.monotonic() + 5
+    while not reply.endswith(b"\n") and time.monotonic() < deadline:
+        if not sock.waitForReadyRead(int(max(0.1, deadline - time.monotonic()) * 1000)):
+            break
+        reply.extend(bytes(sock.readAll()))
+    sock.disconnectFromServer()
+    return reply.startswith(b"ok")
+
+
+_ONE_WINDOW = None  # the Windows lock this copy holds while it's the one window (freed when it exits)
+
+
+def claim_one_window(name, files):
+    """True: go on, this is the one Video Caster window for these settings. False: another copy
+    is open and took over (came forward, added `files`): this start ends.
+
+    A Windows lock (a named mutex) decides, so two starts at the same moment can't both open. A copy
+    that's closing (or just starting) still holds it: wait until it has saved and gone, or answers."""
+    global _ONE_WINDOW
+    if sys.platform != "win32":
+        return not hand_over(name, files)
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.CreateMutexW.restype = ctypes.c_void_p
+        k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        k32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        handle = k32.CreateMutexW(None, False, "Local\\" + name)
+    except Exception:
+        handle = None
+    if not handle:  # can't tell: as before, open
+        return True
+    _ONE_WINDOW = handle
+    deadline = time.monotonic() + 20
+    while True:
+        if k32.WaitForSingleObject(handle, 0) in (0, 0x80):  # ours now (or its holder ended without letting go)
+            return True
+        if hand_over(name, files):
+            return False
+        if time.monotonic() > deadline:  # the open copy doesn't answer (hangs): don't leave the user without one
+            be.log("one window: the open copy doesn't answer - starting another one")
+            return True
+        time.sleep(0.3)
+
+
 def main():
     be.refresh_windows_path()
     parser = argparse.ArgumentParser(description=APP_NAME)
@@ -4165,10 +4295,14 @@ def main():
         except Exception:
             pass
     app = QApplication(sys.argv[:1])
+    name = instance_name(args.state)
+    if not claim_one_window(name, args.files):  # already open: that window came forward (with the files)
+        sys.exit(0)
     app.setApplicationName(APP_NAME)
     app.setWindowIcon(app_icon())
     app.setFont(QFont("Segoe UI", 9))
     win = MainWindow(args.state, discover=not args.no_discovery)
+    win.listen_for_second_start(name)
     if args.files:
         win.add_paths(args.files)
     win.show()

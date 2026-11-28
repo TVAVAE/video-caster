@@ -47,7 +47,7 @@ except Exception:  # pragma: no cover
     NETWORK_IMPORT_ERRORS["airplay"] = traceback.format_exc()
 
 APP_NAME = "Video Caster"
-APP_VERSION = "0.3.9"  # the one place for the version: build-installer.ps1 reads it from here
+APP_VERSION = "0.3.10"  # the one place for the version: build-installer.ps1 reads it from here
 APP_DIR = Path(__file__).resolve().parent
 # A one-file executable extracts its code into a temporary directory. Keep user
 # data outside that directory so upgrades and closing the app cannot erase it.
